@@ -1,0 +1,112 @@
+name: Production release composition
+
+on:
+  workflow_dispatch:
+
+permissions:
+  attestations: write
+  artifact-metadata: write
+  contents: read
+  id-token: write
+
+jobs:
+  compose:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS AArch64 production package
+            runner: '["self-hosted","macOS","ARM64","cdm-release"]'
+          - name: Linux x86_64 production package
+            runner: '["self-hosted","Linux","X64","cdm-release"]'
+          - name: Linux AArch64 production package
+            runner: '["self-hosted","Linux","ARM64","cdm-release"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - name: Verify packaging metadata
+        run: bash packaging/tests.sh
+      - name: Acquire exact Alpine corresponding source
+        run: ./packaging/prepare-alpine-sources-container.sh
+      - name: Compose production release
+        env:
+          CDM_CODESIGN_IDENTITY: ${{ secrets.CDM_CODESIGN_IDENTITY }}
+        run: |
+          source packaging/versions.env
+          export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-$ALPINE_VERSION"
+          ./packaging/package.sh release
+      - name: Verify release set
+        run: |
+          target=$(rustc -vV | awk '/^host:/ {print $2}')
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          ./packaging/package.sh verify "target/dist/cdm-$version-$target" "$target"
+          (
+            cd target/dist
+            for checksum in *.sha256; do
+              if command -v shasum >/dev/null 2>&1; then
+                shasum -a 256 -c "$checksum"
+              else
+                sha256sum -c "$checksum"
+              fi
+            done
+          )
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          documents = list(Path("target/dist").glob("*.provenance.intoto.json"))
+          assert len(documents) == 1, documents
+          statement = json.loads(documents[0].read_text(encoding="utf-8"))
+          parameters = statement["predicate"]["buildDefinition"]["internalParameters"]
+          assert parameters["toolchain"]
+          assert set(parameters["evidenceDigests"]) == {
+              "SBOM.spdx.json",
+              "guest-init.provenance.json",
+          }
+          PY
+      - name: Run exact target-native package acceptance
+        run: |
+          target=$(rustc -vV | awk '/^host:/ {print $2}')
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          package="$PWD/target/dist/cdm-$version-$target"
+          test -x "$package/bin/cdm"
+          journey_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/cdm-release-journey.XXXXXX")
+          relocated="$journey_root/relocated package with spaces"
+          cp -R "$package" "$relocated"
+          "$relocated/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
+
+          installed="$journey_root/installed prefix with spaces"
+          "$relocated/install.sh" install "$installed"
+          "$relocated/install.sh" verify "$installed"
+          "$installed/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
+          "$relocated/install.sh" uninstall "$installed"
+
+          CDM="$relocated/bin/cdm" \
+            CDM_REQUIRE_NATIVE=1 \
+            CDM_REQUIRE_VM=1 \
+            CDM_OCI_SMOKE_TESTS=1 \
+            CDM_OCI_TESTS=0 \
+            CDM_AI_TESTS=0 \
+            CDM_COMPAT_TESTS=0 \
+            ./tests/integration.sh
+      - name: Cryptographically attest exact release outputs
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: |
+            rust/target/dist/*.tar.gz
+            rust/target/dist/*.provenance.intoto.json
+            rust/target/dist/*.sha256
+      - name: Upload exact release outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.name }}
+          path: rust/target/dist/*
+          if-no-files-found: error
+          retention-days: 14

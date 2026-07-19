@@ -1,0 +1,38 @@
+name: Alpine corresponding source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Fetch and verify pinned Alpine sources
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Acquire exact aports inputs and distfiles
+        run: ./packaging/prepare-alpine-sources-container.sh
+      - name: Verify and archive deterministic payload
+        run: |
+          source packaging/versions.env
+          payload="target/alpine-corresponding-source-$ALPINE_VERSION"
+          archive="$payload.tar.gz"
+          python3 packaging/verify-alpine-sources.py verify \
+            assets/alpine-rootfs.lock.json "$payload"
+          SOURCE_DATE_EPOCH=0 python3 packaging/create-archive.py \
+            "$payload" "$archive" "$(basename "$payload")"
+          sha256sum "$archive" > "$archive.sha256"
+      - name: Upload verified source payload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: alpine-corresponding-source
+          path: |
+            rust/target/alpine-corresponding-source-*.tar.gz
+            rust/target/alpine-corresponding-source-*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14

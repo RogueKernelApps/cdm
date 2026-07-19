@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cdm.invalid/schemas/guest-init-plan-v2.json",
+  "title": "CDM guest init plan v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "argv_bytes", "cwd", "uid", "gid"],
+  "properties": {
+    "schema": { "const": 2 },
+    "argv_bytes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {
+        "type": "array",
+        "maxItems": 65536,
+        "items": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "not": { "contains": { "const": 0 } }
+      }
+    },
+    "fake_env": {
+      "type": "object",
+      "maxProperties": 4096,
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 65536,
+        "pattern": "^[^=\\u0000]+$"
+      },
+      "additionalProperties": { "type": "string", "maxLength": 65536 }
+    },
+    "cwd": { "$ref": "#/$defs/absolutePath" },
+    "uid": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+    "gid": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+    "mounts": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": { "$ref": "#/$defs/mount" },
+      "contains": {
+        "type": "object",
+        "required": ["kind", "target"],
+        "properties": {
+          "kind": { "const": "proc" },
+          "target": { "const": "/proc" }
+        }
+      },
+      "minContains": 1
+    },
+    "denies": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": { "$ref": "#/$defs/deny" }
+    }
+  },
+  "$defs": {
+    "absolutePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536,
+      "pattern": "^/"
+    },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": {
+          "enum": ["virtiofs", "bind", "proc", "sysfs", "devtmpfs", "tmpfs"]
+        },
+        "source": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "target": { "$ref": "#/$defs/absolutePath" },
+        "read_only": { "type": "boolean", "default": false }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["virtiofs", "bind"] } } },
+          "then": { "required": ["source"] },
+          "else": { "not": { "required": ["source"] } }
+        }
+      ]
+    },
+    "deny": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "kind"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolutePath" },
+        "kind": { "enum": ["file", "directory"] }
+      }
+    }
+  }
+}

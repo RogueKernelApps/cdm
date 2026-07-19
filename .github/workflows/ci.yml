@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Rust and repository contracts
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo test --locked --all-targets
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: python3 tests/validate_documentation.py
+      - run: bash packaging/tests.sh
+
+  msrv:
+    name: Minimum supported Rust 1.88
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.88.0
+      - run: cargo check --locked --all-targets
+
+  vm-feature:
+    name: VM feature compile, tests, and lint
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+          components: clippy
+          targets: x86_64-unknown-linux-musl
+      - name: Install VM build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang libclang-dev lld make musl-tools patchelf pkg-config
+      - name: Build the pinned VM runtime and guest init
+        run: ./packaging/package.sh runtime
+      - name: Export the verified VM build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/target/package-work/prefix-x86_64-unknown-linux-gnu"
+          package=$(find "$PWD/target/dist" -mindepth 1 -maxdepth 1 -type d \
+            -name 'cdm-*-x86_64-unknown-linux-gnu' -print -quit)
+          test -n "$package"
+          guest_init="$package/libexec/cdm/cdm-guest-init"
+          test -x "$guest_init"
+          {
+            echo "PKG_CONFIG_PATH=$prefix/lib64/pkgconfig"
+            echo "LD_LIBRARY_PATH=$prefix/lib64"
+            echo "CDM_GUEST_INIT_BIN=$guest_init"
+            echo "CDM_GUEST_INIT_SHA256=$(sha256sum "$guest_init" | awk '{print $1}')"
+            echo "CDM_GUEST_INIT_PROVENANCE=$package/share/cdm/guest-init.provenance.json"
+          } >> "$GITHUB_ENV"
+      - run: cargo test --locked --all-targets --features vm
+      - run: cargo clippy --locked --all-targets --features vm -- -D warnings
+
+  native-linux:
+    name: Native integration (Linux x86_64)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+      - name: Install Bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          bwrap --ro-bind / / /usr/bin/true
+      - run: cargo build --locked --release
+      - name: Run exact native artifact
+        run: CDM_REQUIRE_NATIVE=1 CDM_SKIP_VM=1 CDM="$PWD/target/release/cdm" ./tests/integration.sh
+
+  native-macos:
+    name: Native integration (macOS)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+      - run: cargo build --locked --release
+      - name: Require Seatbelt and run exact native artifact
+        run: |
+          /usr/bin/sandbox-exec -p '(version 1) (allow default)' /usr/bin/true
+          CDM_REQUIRE_NATIVE=1 CDM_SKIP_VM=1 CDM="$PWD/target/release/cdm" ./tests/integration.sh
+
+  dependency-audit:
+    name: RustSec audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+      - run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit --deny warnings

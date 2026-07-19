@@ -1,0 +1,65 @@
+name: Guest init
+
+on:
+  push:
+    paths:
+      - "rust/guest-init/**"
+      - "rust/assets/**"
+      - "rust/build.rs"
+      - "rust/Cargo.toml"
+      - "rust/Cargo.lock"
+      - "rust/src/access.rs"
+      - "rust/src/process.rs"
+      - "rust/src/sandbox.rs"
+      - "rust/src/sandbox/rootfs.rs"
+      - "rust/src/sandbox/vm.rs"
+      - "rust/packaging/guest-init.sh"
+      - "rust/packaging/package.sh"
+      - "rust/packaging/versions.env"
+      - ".github/workflows/guest-init.yml"
+  pull_request:
+    paths:
+      - "rust/guest-init/**"
+      - "rust/assets/**"
+      - "rust/build.rs"
+      - "rust/Cargo.toml"
+      - "rust/Cargo.lock"
+      - "rust/src/access.rs"
+      - "rust/src/process.rs"
+      - "rust/src/sandbox.rs"
+      - "rust/src/sandbox/rootfs.rs"
+      - "rust/src/sandbox/vm.rs"
+      - "rust/packaging/guest-init.sh"
+      - "rust/packaging/package.sh"
+      - "rust/packaging/versions.env"
+      - ".github/workflows/guest-init.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.90.0"
+          targets: ${{ matrix.architecture }}-unknown-linux-musl
+          components: rustfmt, clippy
+      - name: Host-independent contract tests
+        working-directory: rust
+        run: ./guest-init/tests.sh
+      - name: Static guest build
+        working-directory: rust
+        run: ./guest-init/build-static.sh "${{ matrix.architecture }}" target/guest-init
+      - name: Verify generated provenance
+        working-directory: rust
+        run: |
+          file "target/guest-init/cdm-guest-init-${{ matrix.architecture }}" | grep -E 'statically linked|static-pie linked'
+          python3 -m json.tool "target/guest-init/cdm-guest-init-${{ matrix.architecture }}.provenance.json" >/dev/null

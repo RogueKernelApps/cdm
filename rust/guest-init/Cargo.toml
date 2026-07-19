@@ -1,0 +1,22 @@
+[package]
+name = "cdm-guest-init"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+description = "Static PID 1 and policy-plan executor for CDM microVM guests"
+license = "MIT"
+
+[dependencies]
+libc = "0.2.186"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+sha2 = "0.10.9"
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true

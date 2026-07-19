@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "timing": {
+    "started_unix_ms": 1700000000000,
+    "duration_ms": 42
+  },
+  "execution": {
+    "backend": "seatbelt",
+    "argument_count": 3
+  },
+  "policy": {
+    "workspace": "read_write",
+    "host": "readable",
+    "network": "proxied",
+    "allow_ro_paths": 3,
+    "allow_rw_paths": 2,
+    "hard_denials": 4,
+    "coverage": {
+      "filesystem": {
+        "configured_rules": 4,
+        "observed_denials": 0,
+        "observation": "partial"
+      },
+      "network": {
+        "configured_rules": 2,
+        "observed_denials": 2,
+        "observation": "complete"
+      }
+    }
+  },
+  "counters": {
+    "proxy": {
+      "requests_allowed": 8,
+      "requests_blocked": 2,
+      "substitutions": 4,
+      "bytes_from_child": 120,
+      "bytes_to_upstream": 100,
+      "bytes_from_upstream": 300,
+      "bytes_to_child": 240,
+      "rejected_messages": 1
+    },
+    "secrets": {
+      "configured": 2,
+      "staged_files": 1,
+      "injected_entries": 3
+    },
+    "events_dropped": 0
+  },
+  "events": [
+    {
+      "at_ms": 1,
+      "type": "lifecycle",
+      "phase": "setup",
+      "state": "started"
+    },
+    {
+      "at_ms": 9,
+      "type": "denial_observed",
+      "surface": "network",
+      "count": 2
+    }
+  ],
+  "outcome": {
+    "child": {
+      "status": "exited",
+      "code": 0
+    },
+    "cleanup": {
+      "status": "succeeded"
+    },
+    "worktree": {
+      "status": "committed",
+      "files_changed": 2,
+      "insertions": 7,
+      "deletions": 1
+    }
+  }
+}

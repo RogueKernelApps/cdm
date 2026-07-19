@@ -1,0 +1,20 @@
+# macOS and editor state
+.DS_Store
+**/.DS_Store
+.claude/
+.pi/
+.pi-subagents/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local test and packaging output
+.scratch/
+.cdm-session*.json
+rust/target/
+rust/dist/
+*.log
+__pycache__/
+*.py[cod]

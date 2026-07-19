@@ -1,0 +1,64 @@
+name: Target-native acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_oci:
+        description: Pull and test OCI images
+        type: boolean
+        default: false
+      run_ai:
+        description: Run authenticated coding-harness checks
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  signed-vm:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS AArch64 signed VM
+            runner: '["self-hosted","macOS","ARM64","cdm-vm"]'
+          - name: Linux x86_64 VM
+            runner: '["self-hosted","Linux","X64","cdm-vm"]'
+          - name: Linux AArch64 VM
+            runner: '["self-hosted","Linux","ARM64","cdm-vm"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        with:
+          toolchain: 1.90.0
+          components: clippy,rustfmt
+      - run: cargo fmt --check
+      - run: cargo test --locked --all-targets --features vm
+      - run: cargo clippy --locked --all-targets --features vm -- -D warnings
+      - run: ./packaging/package.sh runtime
+      - name: Locate and verify exact package
+        id: package
+        run: |
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          target=$(rustc -vV | awk '/^host:/ {print $2}')
+          package="$PWD/target/dist/cdm-$version-$target"
+          ./packaging/package.sh verify-runtime "$package" "$target"
+          relocated=$(mktemp -d "${RUNNER_TEMP:-/tmp}/cdm-acceptance-relocated.XXXXXX")/"runtime package with spaces"
+          cp -R "$package" "$relocated"
+          "$relocated/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
+          printf 'path=%s\n' "$relocated" >> "$GITHUB_OUTPUT"
+      - name: Run target-native acceptance
+        env:
+          CDM: ${{ steps.package.outputs.path }}/bin/cdm
+          CDM_REQUIRE_NATIVE: '1'
+          CDM_REQUIRE_VM: '1'
+          CDM_OCI_SMOKE_TESTS: '1'
+          CDM_OCI_TESTS: ${{ inputs.run_oci && '1' || '0' }}
+          CDM_AI_TESTS: ${{ inputs.run_ai && '1' || '0' }}
+        run: ./tests/integration.sh

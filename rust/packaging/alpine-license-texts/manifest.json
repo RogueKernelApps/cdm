@@ -1,0 +1,42 @@
+{
+  "licenses": [
+    {
+      "file": "Apache-2.0.txt",
+      "id": "Apache-2.0",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "file": "BSD-2-Clause.txt",
+      "id": "BSD-2-Clause",
+      "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df"
+    },
+    {
+      "file": "GPL-2.0-only.txt",
+      "id": "GPL-2.0-only",
+      "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3"
+    },
+    {
+      "file": "GPL-2.0-or-later.txt",
+      "id": "GPL-2.0-or-later",
+      "sha256": "aaf135472f81c5b4a0dca9367e5bb5e9750032b5bebe5442b36e4c0a47430df3"
+    },
+    {
+      "file": "MIT.txt",
+      "id": "MIT",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    },
+    {
+      "file": "MPL-2.0.txt",
+      "id": "MPL-2.0",
+      "sha256": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
+    },
+    {
+      "file": "Zlib.txt",
+      "id": "Zlib",
+      "sha256": "bfb1112d49db5b1daecdfef24bd7e2f3ea0bafb33aa67aa0ab51e2bf8407c03d"
+    }
+  ],
+  "schema": 1,
+  "spdx_license_list_commit": "c4a7237ec8f4654e867546f9f409749300f1bf4c",
+  "spdx_license_list_version": "3.28.0"
+}

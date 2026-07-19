@@ -1,0 +1,22 @@
+# Cargo
+/target/
+/dist/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+*.o
+*.a
+*.so
+*.dylib
+
+# Debug
+cdm-seatbelt-*.sb
+cdm-stage-*/

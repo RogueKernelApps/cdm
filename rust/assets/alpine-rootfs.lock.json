@@ -1,0 +1,350 @@
+{
+  "schema": 2,
+  "alpine_version": "3.21.7",
+  "rootfs": [
+    {
+      "architecture": "aarch64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.7-aarch64.tar.gz",
+      "sha256": "d1d1a3fae5f4d6146e9742790a47fcb116199622cfb8439f218a4d5fbe5000da",
+      "packages": [
+        {
+          "apk_checksum": "Q1fMzOBGrN5A2tRfD+hq90EexboUQ=",
+          "name": "alpine-baselayout",
+          "version": "3.6.8-r1",
+          "architecture": "aarch64",
+          "description": "Alpine base dir structure and init scripts",
+          "source_url": "https://git.alpinelinux.org/cgit/aports/tree/main/alpine-baselayout",
+          "license": "GPL-2.0-only",
+          "source_package": "alpine-baselayout",
+          "build_commit": "5f0cd7890349e7fe11128478ac506c709805224d"
+        },
+        {
+          "apk_checksum": "Q1YluBoF1dbOwSXQzQPPjP8CnKLb0=",
+          "name": "alpine-baselayout-data",
+          "version": "3.6.8-r1",
+          "architecture": "aarch64",
+          "description": "Alpine base dir structure and init scripts",
+          "source_url": "https://git.alpinelinux.org/cgit/aports/tree/main/alpine-baselayout",
+          "license": "GPL-2.0-only",
+          "source_package": "alpine-baselayout",
+          "build_commit": "5f0cd7890349e7fe11128478ac506c709805224d"
+        },
+        {
+          "apk_checksum": "Q1MchWO9rd+xBzdNDZBiwL1Tg9/aU=",
+          "name": "alpine-keys",
+          "version": "2.5-r0",
+          "architecture": "aarch64",
+          "description": "Public keys for Alpine Linux packages",
+          "source_url": "https://alpinelinux.org",
+          "license": "MIT",
+          "source_package": "alpine-keys",
+          "build_commit": "6d473fb38effb2389f567b29fb7eb27039b3a279"
+        },
+        {
+          "apk_checksum": "Q1H/YWkqCB+C+Gc/LP9yCF2jagE5M=",
+          "name": "alpine-release",
+          "version": "3.21.7-r0",
+          "architecture": "aarch64",
+          "description": "Alpine release data",
+          "source_url": "https://alpinelinux.org",
+          "license": "MIT",
+          "source_package": "alpine-base",
+          "build_commit": "d0fb4afb42fe848ef523e006f2672ef2caf75ee1"
+        },
+        {
+          "apk_checksum": "Q1CkP9a3awut9Uv8Wj9F0CqEKo7YM=",
+          "name": "apk-tools",
+          "version": "2.14.6-r3",
+          "architecture": "aarch64",
+          "description": "Alpine Package Keeper - package manager for alpine",
+          "source_url": "https://gitlab.alpinelinux.org/alpine/apk-tools",
+          "license": "GPL-2.0-only",
+          "source_package": "apk-tools",
+          "build_commit": "41847d6ccff08940b5bf1ba0d6005e95897039f9"
+        },
+        {
+          "apk_checksum": "Q1sFUVM6x0MU3Jgfd3WBNOFoeX2Rs=",
+          "name": "busybox",
+          "version": "1.37.0-r14",
+          "architecture": "aarch64",
+          "description": "Size optimized toolbox of many common UNIX utilities",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q13RZJEDHJZzNO8iOCpc3apkpKLKY=",
+          "name": "busybox-binsh",
+          "version": "1.37.0-r14",
+          "architecture": "aarch64",
+          "description": "busybox ash /bin/sh",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q19ceKTfkaGbTN3WMUv+IWr1G5zwU=",
+          "name": "ca-certificates-bundle",
+          "version": "20260413-r0",
+          "architecture": "aarch64",
+          "description": "Pre generated bundle of Mozilla certificates",
+          "source_url": "https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/",
+          "license": "MPL-2.0 AND MIT",
+          "source_package": "ca-certificates",
+          "build_commit": "f4e20cbe4e1a935579988dfd8cae241d8d050a63"
+        },
+        {
+          "apk_checksum": "Q1dRIsQ3250kFeYeGAY15npEsHfsg=",
+          "name": "libcrypto3",
+          "version": "3.3.7-r0",
+          "architecture": "aarch64",
+          "description": "Crypto library from openssl",
+          "source_url": "https://www.openssl.org/",
+          "license": "Apache-2.0",
+          "source_package": "openssl",
+          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+        },
+        {
+          "apk_checksum": "Q1fL+jshvATvz6mrmfR+BpVsuUraU=",
+          "name": "libssl3",
+          "version": "3.3.7-r0",
+          "architecture": "aarch64",
+          "description": "SSL shared libraries",
+          "source_url": "https://www.openssl.org/",
+          "license": "Apache-2.0",
+          "source_package": "openssl",
+          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+        },
+        {
+          "apk_checksum": "Q1VGBj6ffzFAQCf6cdcQm8gh+VWxI=",
+          "name": "musl",
+          "version": "1.2.5-r11",
+          "architecture": "aarch64",
+          "description": "the musl c library (libc) implementation",
+          "source_url": "https://musl.libc.org/",
+          "license": "MIT",
+          "source_package": "musl",
+          "build_commit": "21cafa1183cf7501d3f1744994d221c038436e45"
+        },
+        {
+          "apk_checksum": "Q1gnfzHeUsMrCfAqW28LsSXd2ICYY=",
+          "name": "musl-utils",
+          "version": "1.2.5-r11",
+          "architecture": "aarch64",
+          "description": "the musl c library (libc) implementation",
+          "source_url": "https://musl.libc.org/",
+          "license": "MIT AND BSD-2-Clause AND GPL-2.0-or-later",
+          "source_package": "musl",
+          "build_commit": "21cafa1183cf7501d3f1744994d221c038436e45"
+        },
+        {
+          "apk_checksum": "Q1wtXOtXltlxMn8m9w3LuCiDFGGQY=",
+          "name": "scanelf",
+          "version": "1.3.8-r1",
+          "architecture": "aarch64",
+          "description": "Scan ELF binaries for stuff",
+          "source_url": "https://wiki.gentoo.org/wiki/Hardened/PaX_Utilities",
+          "license": "GPL-2.0-only",
+          "source_package": "pax-utils",
+          "build_commit": "398a5aee3025ec8a4d0d761e448dc86ac777fa09"
+        },
+        {
+          "apk_checksum": "Q1L4jcUAYJo74LTjGNy1Rnm5AXOes=",
+          "name": "ssl_client",
+          "version": "1.37.0-r14",
+          "architecture": "aarch64",
+          "description": "External ssl_client for busybox wget",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q1C+wfanIOPtT8qM69g0i8CSUBSgw=",
+          "name": "zlib",
+          "version": "1.3.2-r0",
+          "architecture": "aarch64",
+          "description": "A compression/decompression Library",
+          "source_url": "https://zlib.net/",
+          "license": "Zlib",
+          "source_package": "zlib",
+          "build_commit": "2b38f55109add14f4f99a974c2fdf421b6b9e9e9"
+        }
+      ]
+    },
+    {
+      "architecture": "x86_64",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.7-x86_64.tar.gz",
+      "sha256": "8cba1ea3e8b500ea986a313d8eecf3d5952a2a0d23a69117bb81c023d9ceac05",
+      "packages": [
+        {
+          "apk_checksum": "Q17OteNVXn9/iSXcJI1Vf8x0TVc9Y=",
+          "name": "alpine-baselayout",
+          "version": "3.6.8-r1",
+          "architecture": "x86_64",
+          "description": "Alpine base dir structure and init scripts",
+          "source_url": "https://git.alpinelinux.org/cgit/aports/tree/main/alpine-baselayout",
+          "license": "GPL-2.0-only",
+          "source_package": "alpine-baselayout",
+          "build_commit": "5f0cd7890349e7fe11128478ac506c709805224d"
+        },
+        {
+          "apk_checksum": "Q1eXmoNbwxfO25l9OkLzsQvoao0Yo=",
+          "name": "alpine-baselayout-data",
+          "version": "3.6.8-r1",
+          "architecture": "x86_64",
+          "description": "Alpine base dir structure and init scripts",
+          "source_url": "https://git.alpinelinux.org/cgit/aports/tree/main/alpine-baselayout",
+          "license": "GPL-2.0-only",
+          "source_package": "alpine-baselayout",
+          "build_commit": "5f0cd7890349e7fe11128478ac506c709805224d"
+        },
+        {
+          "apk_checksum": "Q1kQFL/boOf3tFBRWUZunxmHFgalk=",
+          "name": "alpine-keys",
+          "version": "2.5-r0",
+          "architecture": "x86_64",
+          "description": "Public keys for Alpine Linux packages",
+          "source_url": "https://alpinelinux.org",
+          "license": "MIT",
+          "source_package": "alpine-keys",
+          "build_commit": "6d473fb38effb2389f567b29fb7eb27039b3a279"
+        },
+        {
+          "apk_checksum": "Q1+UZuHHcZSFAbgjaT3TSHn7lLRgQ=",
+          "name": "alpine-release",
+          "version": "3.21.7-r0",
+          "architecture": "x86_64",
+          "description": "Alpine release data",
+          "source_url": "https://alpinelinux.org",
+          "license": "MIT",
+          "source_package": "alpine-base",
+          "build_commit": "d0fb4afb42fe848ef523e006f2672ef2caf75ee1"
+        },
+        {
+          "apk_checksum": "Q1lwQ1jRtE+nceCgo6Un2KJoMOPro=",
+          "name": "apk-tools",
+          "version": "2.14.6-r3",
+          "architecture": "x86_64",
+          "description": "Alpine Package Keeper - package manager for alpine",
+          "source_url": "https://gitlab.alpinelinux.org/alpine/apk-tools",
+          "license": "GPL-2.0-only",
+          "source_package": "apk-tools",
+          "build_commit": "41847d6ccff08940b5bf1ba0d6005e95897039f9"
+        },
+        {
+          "apk_checksum": "Q1p/ydDCbqw8aB8uA/M5rzEgEeRD4=",
+          "name": "busybox",
+          "version": "1.37.0-r14",
+          "architecture": "x86_64",
+          "description": "Size optimized toolbox of many common UNIX utilities",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q16bbKwS9UCFha5Ij3fKbKXWqmJZ0=",
+          "name": "busybox-binsh",
+          "version": "1.37.0-r14",
+          "architecture": "x86_64",
+          "description": "busybox ash /bin/sh",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q1T1Uo0Udg4sBlMwFrMAy/c260k0U=",
+          "name": "ca-certificates-bundle",
+          "version": "20260413-r0",
+          "architecture": "x86_64",
+          "description": "Pre generated bundle of Mozilla certificates",
+          "source_url": "https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/",
+          "license": "MPL-2.0 AND MIT",
+          "source_package": "ca-certificates",
+          "build_commit": "f4e20cbe4e1a935579988dfd8cae241d8d050a63"
+        },
+        {
+          "apk_checksum": "Q1RD/XEPHSc/uIBLOlSwh0ct3N7Uo=",
+          "name": "libcrypto3",
+          "version": "3.3.7-r0",
+          "architecture": "x86_64",
+          "description": "Crypto library from openssl",
+          "source_url": "https://www.openssl.org/",
+          "license": "Apache-2.0",
+          "source_package": "openssl",
+          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+        },
+        {
+          "apk_checksum": "Q1L+uSQWoZBOp/i3PIo88OqsEJ+TQ=",
+          "name": "libssl3",
+          "version": "3.3.7-r0",
+          "architecture": "x86_64",
+          "description": "SSL shared libraries",
+          "source_url": "https://www.openssl.org/",
+          "license": "Apache-2.0",
+          "source_package": "openssl",
+          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+        },
+        {
+          "apk_checksum": "Q1KuzxE7sFBvldrt+RbsBErcpFyrM=",
+          "name": "musl",
+          "version": "1.2.5-r11",
+          "architecture": "x86_64",
+          "description": "the musl c library (libc) implementation",
+          "source_url": "https://musl.libc.org/",
+          "license": "MIT",
+          "source_package": "musl",
+          "build_commit": "21cafa1183cf7501d3f1744994d221c038436e45"
+        },
+        {
+          "apk_checksum": "Q1fu80ncXZDxtXt7kM784v3WPTRPU=",
+          "name": "musl-utils",
+          "version": "1.2.5-r11",
+          "architecture": "x86_64",
+          "description": "the musl c library (libc) implementation",
+          "source_url": "https://musl.libc.org/",
+          "license": "MIT AND BSD-2-Clause AND GPL-2.0-or-later",
+          "source_package": "musl",
+          "build_commit": "21cafa1183cf7501d3f1744994d221c038436e45"
+        },
+        {
+          "apk_checksum": "Q1d3KfdiK66q+2/q90hvT1RSwce2I=",
+          "name": "scanelf",
+          "version": "1.3.8-r1",
+          "architecture": "x86_64",
+          "description": "Scan ELF binaries for stuff",
+          "source_url": "https://wiki.gentoo.org/wiki/Hardened/PaX_Utilities",
+          "license": "GPL-2.0-only",
+          "source_package": "pax-utils",
+          "build_commit": "398a5aee3025ec8a4d0d761e448dc86ac777fa09"
+        },
+        {
+          "apk_checksum": "Q1B/iHSkKtMb9AgzUcjCNrGIFelhQ=",
+          "name": "ssl_client",
+          "version": "1.37.0-r14",
+          "architecture": "x86_64",
+          "description": "External ssl_client for busybox wget",
+          "source_url": "https://busybox.net/",
+          "license": "GPL-2.0-only",
+          "source_package": "busybox",
+          "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
+        },
+        {
+          "apk_checksum": "Q15POhMWEXF6pu93I94TNaex+/BSM=",
+          "name": "zlib",
+          "version": "1.3.2-r0",
+          "architecture": "x86_64",
+          "description": "A compression/decompression Library",
+          "source_url": "https://zlib.net/",
+          "license": "Zlib",
+          "source_package": "zlib",
+          "build_commit": "2b38f55109add14f4f99a974c2fdf421b6b9e9e9"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+cdm - Opinionated OS-native sandboxing for developer workflows
+
+USAGE:
+    cdm [FLAGS] [COMMAND] [ARGS]...
+    cdm run [FLAGS] [COMMAND] [ARGS]...
+    cdm config
+    cdm trust
+    cdm project
+    cdm help
+    cdm version
+    cdm completions <bash|zsh|fish>
+
+Usage: cdm [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...
+          Command and arguments. Shell syntax requires an explicit shell
+
+Options:
+      --preset <NAME>
+          Apply a named global configuration preset. May be repeated
+
+      --no-network
+          Disable all networking
+
+      --no-proxy
+          Use direct networking even when scrambling secrets
+
+      --sec
+          Enable deny-first hardening and imply --scramble
+
+      --scramble
+          Scramble discovered secrets, hide credential files, and enable the egress proxy
+
+      --rw
+          Make the workspace read/write (the default)
+
+      --ro
+          Make the workspace read-only
+
+      --iso
+          Hide host user data outside explicit grants
+
+      --allow-ro <PATH>
+          Add a read-only path grant. May be repeated
+
+      --allow-rw <PATH>
+          Add a read/write path grant. May be repeated
+
+      --app <PATH.APP>
+          Explicit alternative to automatic macOS .app command detection
+
+      --monitor
+          Show sandbox denials in real time
+
+      --allow-domains <DOMAINS>
+          Only allow these comma-separated domains. Requires --scramble or --sec
+
+      --deny-domains <DOMAINS>
+          Block these comma-separated domains. Requires --scramble or --sec
+
+      --allow-private-network
+          Permit proxy connections to private and host-local network addresses
+
+      --vm
+          Run inside the bundled libkrun microVM
+
+      --vmi <IMAGE>
+          Run inside a libkrun microVM using an OCI image
+
+      --workspace
+          Run against a temporary Git worktree
+
+      --report-json <PATH>
+          Write a schema-versioned, redacted JSON session report
+
+      --stats
+          Print compact session statistics to stderr
