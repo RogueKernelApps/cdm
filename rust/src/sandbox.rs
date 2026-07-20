@@ -92,6 +92,7 @@ pub struct SandboxRun {
 }
 
 impl SandboxRun {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn completed(status: crate::process::ChildStatus) -> Self {
         Self {
             child: Ok(status),

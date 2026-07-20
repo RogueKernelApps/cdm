@@ -36,13 +36,20 @@ fn rule(
 #[test]
 fn missing_denial_ancestors_are_pinned_before_the_leaf_mask_and_deduplicated() {
     let mut args = Vec::new();
-    append_hard_denials(
+    let mountpoints = append_hard_denials(
         &mut args,
-        &[rule(
-            "/home/user/.ssh/authorized_keys",
-            crate::access::DeniedPathKind::Missing,
-            &["/home/user/.ssh"],
-        )],
+        &[
+            rule(
+                "/home/user/.ssh",
+                crate::access::DeniedPathKind::Missing,
+                &[],
+            ),
+            rule(
+                "/home/user/.ssh/authorized_keys",
+                crate::access::DeniedPathKind::Missing,
+                &["/home/user/.ssh"],
+            ),
+        ],
         &[rule(
             "/home/user/.ssh/config",
             crate::access::DeniedPathKind::Missing,
@@ -51,12 +58,16 @@ fn missing_denial_ancestors_are_pinned_before_the_leaf_mask_and_deduplicated() {
         &denied_nodes(),
         &[],
         |_| true,
-        |_| false,
+        &[std::path::PathBuf::from("/home/user")],
     );
 
     let directory = args
         .windows(2)
         .position(|pair| pair == ["--tmpfs", "/home/user/.ssh"])
+        .unwrap();
+    let writable_parent = args
+        .windows(3)
+        .position(|triple| triple == ["--bind", "/home/user", "/home/user"])
         .unwrap();
     let leaf = args
         .windows(3)
@@ -69,19 +80,32 @@ fn missing_denial_ancestors_are_pinned_before_the_leaf_mask_and_deduplicated() {
                 ]
         })
         .unwrap();
+    let protected_directory = args
+        .windows(2)
+        .position(|pair| pair == ["--remount-ro", "/home/user/.ssh"])
+        .unwrap();
+    assert!(writable_parent < directory);
     assert!(directory < leaf);
+    assert!(leaf < protected_directory);
+    assert!(!args
+        .windows(2)
+        .any(|pair| pair == ["--remount-ro", "/home/user"]));
     assert_eq!(
         args.windows(2)
             .filter(|pair| pair == &["--tmpfs", "/home/user/.ssh"])
             .count(),
         1
     );
+    assert!(!args.windows(3).any(|triple| {
+        triple == ["--ro-bind", "/fixtures/denied/read-only", "/home/user/.ssh"]
+    }));
+    assert!(mountpoints.contains(&(std::path::PathBuf::from("/home/user/.ssh/config"), false)));
 }
 
 #[test]
 fn directory_read_denial_uses_an_inaccessible_directory_overlay() {
     let mut args = Vec::new();
-    append_hard_denials(
+    let _mountpoints = append_hard_denials(
         &mut args,
         &[],
         &[rule(
@@ -92,7 +116,7 @@ fn directory_read_denial_uses_an_inaccessible_directory_overlay() {
         &denied_nodes(),
         &[],
         |_| true,
-        |_| false,
+        &[],
     );
 
     assert!(args
@@ -103,7 +127,7 @@ fn directory_read_denial_uses_an_inaccessible_directory_overlay() {
 #[test]
 fn existing_writable_parent_is_pinned_before_its_denied_leaf() {
     let mut args = Vec::new();
-    append_hard_denials(
+    let _mountpoints = append_hard_denials(
         &mut args,
         &[rule(
             "/workspace/protected",
@@ -114,7 +138,7 @@ fn existing_writable_parent_is_pinned_before_its_denied_leaf() {
         &denied_nodes(),
         &[],
         |_| true,
-        |path| path == Path::new("/workspace"),
+        &[std::path::PathBuf::from("/workspace")],
     );
     let parent = args
         .windows(3)
@@ -128,9 +152,112 @@ fn existing_writable_parent_is_pinned_before_its_denied_leaf() {
 }
 
 #[test]
+fn existing_read_only_parent_with_writable_descendant_is_remounted_before_its_denied_leaf() {
+    let mut args = Vec::new();
+    let _mountpoints = append_hard_denials(
+        &mut args,
+        &[rule(
+            "/host/protected",
+            crate::access::DeniedPathKind::File,
+            &[],
+        )],
+        &[],
+        &denied_nodes(),
+        &[],
+        |_| true,
+        &[std::path::PathBuf::from("/host/writable")],
+    );
+    let parent = args
+        .windows(3)
+        .position(|triple| triple == ["--bind", "/host", "/host"])
+        .unwrap();
+    let leaf = args
+        .windows(3)
+        .position(|triple| triple == ["--ro-bind", "/host/protected", "/host/protected"])
+        .unwrap();
+    let protected_parent = args
+        .windows(2)
+        .position(|pair| pair == ["--remount-ro", "/host"])
+        .unwrap();
+    assert!(parent < protected_parent);
+    assert!(protected_parent < leaf);
+}
+
+#[test]
+fn missing_leaf_below_read_only_parent_uses_the_parent_denial_without_a_placeholder() {
+    let mut args = Vec::new();
+    let _mountpoints = append_hard_denials(
+        &mut args,
+        &[
+            rule(
+                "/home/user/cache",
+                crate::access::DeniedPathKind::Directory,
+                &[],
+            ),
+            rule(
+                "/home/user/cache/rootfs",
+                crate::access::DeniedPathKind::Missing,
+                &[],
+            ),
+        ],
+        &[],
+        &denied_nodes(),
+        &[],
+        |_| true,
+        &[],
+    );
+    let parent = args
+        .windows(3)
+        .position(|triple| triple == ["--bind", "/home/user/cache", "/home/user/cache"])
+        .unwrap();
+    let protected_directory = args
+        .windows(3)
+        .position(|triple| triple == ["--ro-bind", "/home/user/cache", "/home/user/cache"])
+        .unwrap();
+    assert!(parent < protected_directory);
+    assert!(!args
+        .windows(2)
+        .any(|pair| pair == ["--remount-ro", "/home/user/cache"]));
+    assert!(!args.windows(3).any(|triple| {
+        triple
+            == [
+                "--ro-bind",
+                "/fixtures/denied/read-only",
+                "/home/user/cache/rootfs",
+            ]
+    }));
+}
+
+#[test]
+fn missing_leaf_below_writable_parent_uses_a_narrow_placeholder() {
+    let mut args = Vec::new();
+    let _mountpoints = append_hard_denials(
+        &mut args,
+        &[rule(
+            "/workspace/future",
+            crate::access::DeniedPathKind::Missing,
+            &[],
+        )],
+        &[],
+        &denied_nodes(),
+        &[],
+        |_| true,
+        &[std::path::PathBuf::from("/workspace")],
+    );
+    assert!(args.windows(3).any(|triple| {
+        triple
+            == [
+                "--ro-bind",
+                "/fixtures/denied/read-only",
+                "/workspace/future",
+            ]
+    }));
+}
+
+#[test]
 fn synthetic_runtime_tree_does_not_recreate_denied_socket_placeholders() {
     let mut args = Vec::new();
-    append_hard_denials(
+    let _mountpoints = append_hard_denials(
         &mut args,
         &[rule(
             "/var/run/docker.sock",
@@ -148,7 +275,7 @@ fn synthetic_runtime_tree_does_not_recreate_denied_socket_placeholders() {
             std::path::PathBuf::from("/var/run"),
         ],
         |_| true,
-        |_| false,
+        &[],
     );
     assert!(args.is_empty());
 }
@@ -156,7 +283,7 @@ fn synthetic_runtime_tree_does_not_recreate_denied_socket_placeholders() {
 #[test]
 fn isolated_mode_does_not_expose_an_unreachable_denial_parent() {
     let mut args = Vec::new();
-    append_hard_denials(
+    let _mountpoints = append_hard_denials(
         &mut args,
         &[rule(
             "/home/user/.ssh/authorized_keys",
@@ -167,7 +294,7 @@ fn isolated_mode_does_not_expose_an_unreachable_denial_parent() {
         &denied_nodes(),
         &[],
         |path| path.starts_with("/workspace"),
-        |_| false,
+        &[],
     );
     assert!(args.is_empty());
 }
@@ -179,4 +306,14 @@ fn seccomp_program_fd_is_a_bwrap_policy_argument() {
     args.push("--".to_string());
 
     assert_eq!(args, ["--cap-drop", "ALL", "--seccomp", "17", "--"]);
+}
+
+#[test]
+fn bwrap_signal_exit_convention_retains_the_originating_signal() {
+    let status = preserve_bwrap_signal_status(crate::process::ChildStatus::exited(143));
+    assert_eq!(status.exit_code, 143);
+    assert_eq!(status.signal, Some(libc::SIGTERM));
+
+    let ordinary = preserve_bwrap_signal_status(crate::process::ChildStatus::exited(42));
+    assert_eq!(ordinary.signal, None);
 }

@@ -30,6 +30,7 @@ pub struct AppWriteGrant {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub enum AppGrantSource {
     BundleConvention,
     BundleReference,

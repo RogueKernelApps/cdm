@@ -119,6 +119,7 @@ impl Monitor {
         failure.map_or(Ok(()), Err)
     }
 
+    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     pub fn log_event(&self, category: &str, message: &str) {
         if let Ok(mut file) = self.log_file.lock() {
             let category = one_line(category);

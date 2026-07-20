@@ -60,6 +60,7 @@ if has_native; then
     GLOBAL_STATE="$LAYER_ROOT/global-state"
     PROJECT_STATE="$LAYER_ROOT/project-state"
     mkdir -p "$TEST_HOME/.cdm" "$PROJECT/.cdm" "$GLOBAL_STATE" "$PROJECT_STATE"
+    chmod 700 "$TEST_HOME/.cdm"
     GLOBAL_CONFIG="$TEST_HOME/.cdm/config.json"
     printf '{"paths":{"allow_rw":["%s","%s"]},"presets":{"first":{"guard":{"blocked_commands":[{"prefix":"echo first","reason":"first preset"}]}},"second":{"guard":{"blocked_commands":[{"prefix":"echo second","reason":"second preset"}]}}}}\n' \
         "$GLOBAL_STATE" "$TEST_HOME/.cdm" > "$GLOBAL_CONFIG"
@@ -74,8 +75,13 @@ if has_native; then
     fi
 
     TRUST_OUTPUT=$(cd "$PROJECT" && HOME="$TEST_HOME" CDM_CONFIG_PATH="$GLOBAL_CONFIG" "$CDM" trust 2>&1)
-    if [ "$?" -eq 0 ] && echo "$TRUST_OUTPUT" | grep -Fq 'sha256:' && \
-        [ "$(stat -f '%Lp' "$TEST_HOME/.cdm/trusted-projects.json" 2>/dev/null || stat -c '%a' "$TEST_HOME/.cdm/trusted-projects.json")" = 600 ]; then
+    TRUST_STATUS=$?
+    case "$(uname -s)" in
+        Darwin) TRUST_MODE=$(stat -f '%Lp' "$TEST_HOME/.cdm/trusted-projects.json" 2>/dev/null) ;;
+        *) TRUST_MODE=$(stat -c '%a' "$TEST_HOME/.cdm/trusted-projects.json" 2>/dev/null) ;;
+    esac
+    if [ "$TRUST_STATUS" -eq 0 ] && grep -Fq 'sha256:' <<<"$TRUST_OUTPUT" && \
+        [ "$TRUST_MODE" = 600 ]; then
         printf "  ${GREEN}PASS${NC} config: cdm trust records an exact private trust receipt\n"; PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} config: cdm trust failed or trust store is not mode 0600\n"; FAIL=$((FAIL + 1))

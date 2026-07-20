@@ -65,6 +65,7 @@ pub struct ResolvedAccessPolicy {
     pub deny_read_rules: Vec<ResolvedDenyRule>,
     pub deny_write_rules: Vec<ResolvedDenyRule>,
     pub runtime_ro: Vec<PathBuf>,
+    #[cfg_attr(not(any(feature = "vm", test)), allow(dead_code))]
     path_kinds: BTreeMap<PathBuf, DeniedPathKind>,
     path_identities: BTreeMap<PathBuf, Option<PathIdentity>>,
     /// Host runtime trees replaced by empty, synthetic directories by adapters.
@@ -119,6 +120,7 @@ pub struct ResolvedDenyRule {
 }
 
 impl ResolvedAccessPolicy {
+    #[cfg_attr(not(any(feature = "vm", test)), allow(dead_code))]
     pub fn kind(&self, path: &Path) -> Option<DeniedPathKind> {
         self.path_kinds.get(path).copied()
     }

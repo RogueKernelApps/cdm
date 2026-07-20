@@ -3,9 +3,10 @@
 use crate::sandbox::{SandboxConfig, SandboxRun};
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::os::unix::fs::PermissionsExt;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 /// Runs a command in a bubblewrap sandbox on Linux.
@@ -97,15 +98,24 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
         }
     }
 
-    append_hard_denials(
+    let mut writable_paths = access.allow_rw.clone();
+    if access.workspace == crate::access::WorkspaceAccess::ReadWrite {
+        writable_paths.push(access.work_dir.clone());
+    }
+    let mountpoints = append_hard_denials(
         &mut args,
         &access.deny_write_rules,
         &access.deny_read_rules,
         &denied_nodes,
         &access.synthetic_dirs,
         |path| path_is_exposed(path, access),
-        |path| path_is_writable(path, access),
+        &writable_paths,
     );
+    let mountpoint_lock_root = cfg
+        .runtime_dir
+        .parent()
+        .ok_or_else(|| io::Error::other("CDM runtime directory has no private parent"))?;
+    let mut prepared_mountpoints = PreparedMountpoints::create(mountpoints, mountpoint_lock_root)?;
 
     // Device and proc
     args.push("--dev".to_string());
@@ -182,16 +192,28 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
             child_command.len()
         );
     }
-
-    let child = crate::process::run(&mut cmd);
+    let child = crate::process::run(&mut cmd).map(preserve_bwrap_signal_status);
     let bridge_cleanup = bridge.as_mut().map_or(Ok(()), |bridge| bridge.stop());
     let denied_cleanup = denied_nodes.finish();
-    let cleanup = combine_cleanup(bridge_cleanup, denied_cleanup);
+    let mountpoint_cleanup = prepared_mountpoints.finish();
+    let cleanup = combine_cleanup(
+        combine_cleanup(bridge_cleanup, denied_cleanup),
+        mountpoint_cleanup,
+    );
     Ok(SandboxRun {
         child,
         cleanup,
         staged_cleanup: Ok(()),
     })
+}
+
+fn preserve_bwrap_signal_status(
+    mut status: crate::process::ChildStatus,
+) -> crate::process::ChildStatus {
+    if status.signal.is_none() && (129..=192).contains(&status.exit_code) {
+        status.signal = Some(status.exit_code - 128);
+    }
+    status
 }
 
 fn combine_cleanup(first: io::Result<()>, second: io::Result<()>) -> io::Result<()> {
@@ -212,8 +234,13 @@ fn append_hard_denials(
     denied_nodes: &DeniedNodes,
     synthetic_dirs: &[std::path::PathBuf],
     path_is_exposed: impl Fn(&Path) -> bool,
-    path_is_writable: impl Fn(&Path) -> bool,
-) {
+    writable_paths: &[std::path::PathBuf],
+) -> Vec<(std::path::PathBuf, bool)> {
+    let path_is_writable = |path: &Path| {
+        writable_paths
+            .iter()
+            .any(|root| path == root || path.starts_with(root))
+    };
     let path_is_active = |path: &Path| {
         path_is_exposed(path) && !path_is_covered_by_synthetic_dir(path, synthetic_dirs)
     };
@@ -231,9 +258,48 @@ fn append_hard_denials(
                 .cloned()
         })
         .collect::<BTreeSet<_>>();
+    let mut mountpoints = missing_parents
+        .iter()
+        .cloned()
+        .map(|path| (path, true))
+        .collect::<Vec<_>>();
+    mountpoints.extend(
+        deny_read_rules
+            .iter()
+            .filter(|rule| rule.kind == crate::access::DeniedPathKind::Missing)
+            .flat_map(|rule| rule.paths())
+            .filter(|path| path_is_active(path))
+            .map(|path| (path.to_path_buf(), false)),
+    );
+    let denied_write_directories = deny_write_rules
+        .iter()
+        .filter(|rule| rule.kind == crate::access::DeniedPathKind::Directory)
+        .flat_map(|rule| rule.paths())
+        .filter(|path| path_is_active(path))
+        .map(Path::to_path_buf)
+        .collect::<BTreeSet<_>>();
+    let mut temporary_writable_parents = missing_parents
+        .iter()
+        .filter_map(|path| path.parent().map(Path::to_path_buf))
+        .filter(|path| !missing_parents.contains(path))
+        .collect::<BTreeSet<_>>();
+    temporary_writable_parents.extend(
+        active_rules
+            .iter()
+            .filter(|rule| {
+                rule.kind == crate::access::DeniedPathKind::Missing
+                    && rule.missing_parents.is_empty()
+            })
+            .flat_map(|rule| rule.paths())
+            .filter(|path| path_is_active(path))
+            .filter_map(Path::parent)
+            .map(Path::to_path_buf),
+    );
     let pinned_existing_parents = active_rules
         .iter()
-        .filter(|rule| rule.missing_parents.is_empty())
+        .filter(|rule| {
+            rule.kind != crate::access::DeniedPathKind::Missing && rule.missing_parents.is_empty()
+        })
         .flat_map(|rule| {
             rule.paths()
                 .filter(|path| path_is_active(path))
@@ -241,25 +307,61 @@ fn append_hard_denials(
                 .map(Path::to_path_buf)
         })
         .collect::<BTreeSet<_>>();
-    for parent in pinned_existing_parents {
-        add_bind(
-            args,
-            if path_is_writable(&parent) {
-                "--bind"
-            } else {
-                "--ro-bind"
-            },
-            &parent,
-        );
+    let mut ancestor_writable_parents = Vec::new();
+    for parent in &pinned_existing_parents {
+        if path_is_writable(parent) {
+            add_bind(args, "--bind", parent);
+        } else if writable_paths
+            .iter()
+            .any(|writable| writable != parent && writable.starts_with(parent))
+        {
+            add_bind(args, "--bind", parent);
+            ancestor_writable_parents.push(parent.clone());
+        } else {
+            add_bind(args, "--ro-bind", parent);
+        }
+    }
+    ancestor_writable_parents.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for parent in ancestor_writable_parents {
+        args.push("--remount-ro".to_string());
+        args.push(parent.to_string_lossy().into_owned());
+    }
+    for writable in writable_paths {
+        if pinned_existing_parents
+            .iter()
+            .any(|parent| writable != parent && writable.starts_with(parent))
+        {
+            add_bind(args, "--bind", writable);
+        }
+    }
+    // Bubblewrap cannot create a mountpoint below a read-only bind. Make each
+    // nearest existing parent writable only while missing mounts are assembled;
+    // the child starts after the read-only remounts appended below.
+    for parent in &temporary_writable_parents {
+        add_bind(args, "--bind", parent);
     }
     // Every absent ancestor is a mountpoint, not a plain directory. This
     // prevents renaming any level of the path and recreating the denied leaf.
-    for parent in missing_parents {
+    for parent in &missing_parents {
         args.push("--tmpfs".to_string());
         args.push(parent.to_string_lossy().into_owned());
     }
 
-    for rule in deny_write_rules {
+    // Missing leaves must be materialized while their parent bind is still
+    // writable. Existing directory masks are applied last and make the final
+    // tree read-only before the child starts.
+    for rule in [
+        crate::access::DeniedPathKind::Missing,
+        crate::access::DeniedPathKind::File,
+        crate::access::DeniedPathKind::Other,
+        crate::access::DeniedPathKind::Directory,
+    ]
+    .into_iter()
+    .flat_map(|kind| {
+        deny_write_rules
+            .iter()
+            .filter(move |rule| rule.kind == kind)
+    }) {
         for path in rule.paths().filter(|path| path_is_active(path)) {
             match rule.kind {
                 crate::access::DeniedPathKind::Directory => {
@@ -269,7 +371,14 @@ fn append_hard_denials(
                     add_bind(args, "--ro-bind", path);
                 }
                 crate::access::DeniedPathKind::Missing => {
-                    add_bind_from(args, "--ro-bind", &denied_nodes.read_only_file, path);
+                    let covered_by_directory = denied_write_directories
+                        .iter()
+                        .any(|directory| path != directory && path.starts_with(directory));
+                    let writable_parent = path.parent().is_some_and(&path_is_writable);
+                    if !missing_parents.contains(path) && !covered_by_directory && writable_parent {
+                        mountpoints.push((path.to_path_buf(), false));
+                        add_bind_from(args, "--ro-bind", &denied_nodes.read_only_file, path);
+                    }
                 }
             }
         }
@@ -284,6 +393,21 @@ fn append_hard_denials(
             add_bind_from(args, "--ro-bind", source, path);
         }
     }
+    let mut missing_parents = missing_parents.into_iter().collect::<Vec<_>>();
+    missing_parents.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for parent in missing_parents {
+        args.push("--remount-ro".to_string());
+        args.push(parent.to_string_lossy().into_owned());
+    }
+    let mut temporary_writable_parents = temporary_writable_parents.into_iter().collect::<Vec<_>>();
+    temporary_writable_parents.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
+    for parent in temporary_writable_parents {
+        if !path_is_writable(&parent) && !denied_write_directories.contains(&parent) {
+            args.push("--remount-ro".to_string());
+            args.push(parent.to_string_lossy().into_owned());
+        }
+    }
+    mountpoints
 }
 
 fn path_is_exposed(path: &Path, access: &crate::access::ResolvedAccessPolicy) -> bool {
@@ -295,19 +419,118 @@ fn path_is_exposed(path: &Path, access: &crate::access::ResolvedAccessPolicy) ->
             .any(|root| path == root || path.starts_with(root))
 }
 
-fn path_is_writable(path: &Path, access: &crate::access::ResolvedAccessPolicy) -> bool {
-    (access.workspace == crate::access::WorkspaceAccess::ReadWrite
-        && (path == access.work_dir || path.starts_with(&access.work_dir)))
-        || access
-            .allow_rw
-            .iter()
-            .any(|root| path == root || path.starts_with(root))
-}
-
 fn path_is_covered_by_synthetic_dir(path: &Path, synthetic_dirs: &[std::path::PathBuf]) -> bool {
     synthetic_dirs
         .iter()
         .any(|root| path == root || path.starts_with(root))
+}
+
+struct PreparedMountpoints {
+    entries: Vec<(std::path::PathBuf, u64, u64, bool)>,
+    _lock: Option<File>,
+    finished: bool,
+}
+
+impl PreparedMountpoints {
+    fn create(
+        mut requested: Vec<(std::path::PathBuf, bool)>,
+        lock_root: &Path,
+    ) -> io::Result<Self> {
+        requested.sort_by_key(|(path, is_dir)| (path.components().count(), !*is_dir));
+        requested.dedup();
+        let lock = if requested.is_empty() {
+            None
+        } else {
+            let lock = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+                .open(lock_root.join("mountpoints.lock"))?;
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Some(lock)
+        };
+        let mut prepared = Self {
+            entries: Vec::new(),
+            _lock: lock,
+            finished: false,
+        };
+        for (path, is_dir) in requested {
+            if is_dir {
+                fs::create_dir(&path)?;
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+            } else {
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o000)
+                    .open(&path)?;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            prepared
+                .entries
+                .push((path, metadata.dev(), metadata.ino(), is_dir));
+        }
+        Ok(prepared)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        let mut failure: Option<io::Error> = None;
+        for (path, device, inode, is_dir) in self.entries.iter().rev() {
+            let result = (|| {
+                let metadata = fs::symlink_metadata(path)?;
+                if metadata.dev() != *device
+                    || metadata.ino() != *inode
+                    || metadata.is_dir() != *is_dir
+                {
+                    return Err(io::Error::other(format!(
+                        "sandbox mountpoint changed before cleanup: {}",
+                        path.display()
+                    )));
+                }
+                let removal = if *is_dir {
+                    fs::remove_dir(path)
+                } else {
+                    fs::remove_file(path)
+                };
+                removal.map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "cannot remove sandbox mountpoint {}: {error}",
+                            path.display()
+                        ),
+                    )
+                })
+            })();
+            if let Err(error) = result {
+                failure = Some(match failure.take() {
+                    Some(first) => io::Error::new(
+                        first.kind(),
+                        format!("{first}; additional cleanup failure: {error}"),
+                    ),
+                    None => error,
+                });
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        self.finished = true;
+        Ok(())
+    }
+}
+
+impl Drop for PreparedMountpoints {
+    fn drop(&mut self) {
+        let _ = self.finish();
+    }
 }
 
 struct DeniedNodes {

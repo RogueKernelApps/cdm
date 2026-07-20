@@ -10,7 +10,7 @@ prepare_guest_init() {
     esac
     mkdir -p "$output_dir"
     binary=$(
-        RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.90} \
+        RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.90.0} \
             "$rust_dir/guest-init/build-static.sh" "$architecture" "$output_dir"
     )
     provenance="$binary.provenance.json"
@@ -70,4 +70,3 @@ assert artifact.get("target") == target, "packaged guest-init target mismatch"
 assert artifact.get("size") == Path(binary).stat().st_size, "packaged guest-init size mismatch"
 PY
 }
-

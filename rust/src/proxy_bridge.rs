@@ -86,6 +86,7 @@ impl ProxyBridge {
         Ok(bridge)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }

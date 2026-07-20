@@ -43,6 +43,8 @@ python3 -m json.tool "$packaging_dir/../assets/alpine-rootfs.lock.json" >/dev/nu
 
 bash -n "$packaging_dir/package.sh"
 bash -n "$packaging_dir/guest-init.sh"
+grep -Fq 'RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.90.0}' "$packaging_dir/guest-init.sh" \
+    || fail "guest-init packaging must use the pinned Rust toolchain exactly"
 bash -n "$packaging_dir/install.sh"
 bash -n "$packaging_dir/check-upstream.sh"
 bash -n "$packaging_dir/prepare-alpine-sources-container.sh"
