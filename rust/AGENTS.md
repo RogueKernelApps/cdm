@@ -7,7 +7,7 @@ Read the repository-root `AGENTS.md` first.
 - `src/config.rs` owns exact-byte project trust and global preset layering. Project policy must remain untrusted after any byte edit, and policy/trust files plus their containing directories must remain hard write-denied. Custom global policy must fail closed unless its dedicated parent can be validated and denied in full.
 - `src/access.rs` owns resolved filesystem policy and hard denials.
 - `src/app.rs` owns macOS application-bundle discovery.
-- `src/workspace.rs` owns Git-visible state snapshotting, branch reservation, finalization, and cleanup.
+- `src/worktree.rs` owns Git-visible state snapshotting, branch reservation, descriptor-relative no-follow finalization, and cleanup.
 - `src/trusted_exec.rs` owns validation and identity pinning for host-side helper executables. Never add a PATH-resolved pre/post-sandbox helper elsewhere.
 - `src/sandbox/` owns adapter translation and VM/rootfs mechanics. Within VM
   mode, `sandbox/vm.rs` orchestrates the disposable rootfs,

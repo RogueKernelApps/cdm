@@ -22,6 +22,6 @@ These capabilities are intentionally deferred. Implemented historical items were
 
 ## Recorded design decisions
 
-- Keep temporary Git worktrees as the opt-in disposable-write workflow. Do not replace normal `--rw` semantics with a workspace overlay that could obscure or lose expected edits.
+- Keep temporary Git worktrees as the opt-in `--worktree` disposable-write workflow. Do not replace normal `--rw` semantics with a workspace overlay that could obscure or lose expected edits.
 - Do not implement generic byte-stream secret rewriting. New restoration mechanisms must be protocol-specific credential brokers with explicit framing and fail-closed behavior.
 - Defer VM rootfs overlays until cross-platform measurements demonstrate a material startup or storage benefit over the simpler clone-and-merge implementation.

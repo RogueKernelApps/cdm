@@ -68,7 +68,7 @@ Options:
       --vmi <IMAGE>
           Run inside a libkrun microVM using an OCI image
 
-      --workspace
+      --worktree
           Run against a temporary Git worktree
 
       --report-json <PATH>

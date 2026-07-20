@@ -61,7 +61,7 @@ PY
 check_eq "report: config validation failure is published" "$CONFIG_RESULT" "ok"
 
 WORKTREE_REPORT="$REPORT_ROOT/worktree-setup.json"
-(cd "$REPORT_ROOT" && "$CDM" --no-network --workspace \
+(cd "$REPORT_ROOT" && "$CDM" --no-network --worktree \
     --report-json "$WORKTREE_REPORT" true) \
     >"$REPORT_ROOT/worktree-setup.stdout" 2>"$REPORT_ROOT/worktree-setup.stderr"
 RC=$?

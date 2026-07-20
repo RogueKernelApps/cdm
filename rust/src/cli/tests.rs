@@ -40,6 +40,19 @@ fn rejects_conflicting_workspace_modes() {
 }
 
 #[test]
+fn accepts_worktree_and_does_not_treat_workspace_as_a_flag() {
+    let Action::Run(run) = parse(strings(&["--worktree", "echo"])).unwrap() else {
+        panic!("expected run");
+    };
+    assert!(run.worktree);
+    let Action::Run(old) = parse(strings(&["--workspace", "echo"])).unwrap() else {
+        panic!("expected run");
+    };
+    assert!(!old.worktree);
+    assert_eq!(old.command, strings(&["--workspace", "echo"]));
+}
+
+#[test]
 fn parses_explicit_secret_scrambling() {
     let Action::Run(run) = parse(strings(&["--scramble", "echo", "ok"])).unwrap() else {
         panic!("expected run");
@@ -101,7 +114,8 @@ fn generates_completions_from_the_typed_command() {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("allow-rw"));
         assert!(output.contains("scramble"));
-        assert!(output.contains("workspace"));
+        assert!(output.contains("worktree"));
+        assert!(!output.contains("--workspace"));
         assert!(output.contains("report-json"));
         assert!(output.contains("stats"));
         assert!(output.contains("preset"));

@@ -12,7 +12,7 @@
 #   01_seatbelt.sh  — macOS Seatbelt sandbox
 #   02_vm.sh        — real libkrun VM lifecycle and optional OCI images
 #   03_proxy.sh     — HTTP/HTTPS proxy deobfuscation
-#   04_workspace.sh — Git state snapshot, worktree, branch, and VM composition
+#   04_worktree.sh  — Git state snapshot, worktree, branch, and VM composition
 #   05_env.sh       — Environment, secrets, command blocking
 #   06_config.sh    — Global/project configuration and precedence
 #   07_cross_mode.sh — Cross-mode tests

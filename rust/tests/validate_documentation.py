@@ -48,7 +48,7 @@ PUBLIC_FLAGS = (
     "--allow-private-network",
     "--vm",
     "--vmi",
-    "--workspace",
+    "--worktree",
     "--report-json",
     "--stats",
 )

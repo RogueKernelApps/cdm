@@ -21,14 +21,14 @@ branch_with_path() {
     return 1
 }
 
-section "Workspace (native worktree lifecycle)"
+section "Worktree (native lifecycle)"
 
 if has_native; then
     WS_REPO=$(make_test_repo)
     ORIGINAL_HEAD=$(git -C "$WS_REPO" rev-parse HEAD)
     ORIGINAL_BRANCH=$(git -C "$WS_REPO" branch --show-current)
 
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'printf "changed\n" >> file.txt; mkdir -p output; printf "first\n" > output/result.txt') \
         >/dev/null 2>"$WS_REPO/first.stderr"
     STATUS=$?
@@ -50,7 +50,7 @@ if has_native; then
         "$(cat "$WS_REPO/first.stderr")" "changes saved to branch $FIRST_BRANCH"
 
     # A second session on the same day must not collide with the first branch.
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'printf "second\n" > second.txt') >/dev/null 2>"$WS_REPO/second.stderr"
     STATUS=$?
     SECOND_BRANCH=$(branch_with_path "$WS_REPO" second.txt || true)
@@ -68,7 +68,7 @@ if has_native; then
     printf 'nested\n' > "$WS_REPO/src/nested/input.txt"
     git -C "$WS_REPO" add src/nested/input.txt
     git -C "$WS_REPO" commit -q -m 'add nested fixture'
-    (cd "$WS_REPO/src/nested" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO/src/nested" && "$CDM" --no-proxy --worktree sh -c \
         'test "$(basename "$PWD")" = nested && cat input.txt && printf "nested-output\n" > result.txt') \
         >"$WS_REPO/nested.stdout" 2>"$WS_REPO/nested.stderr"
     STATUS=$?
@@ -82,7 +82,7 @@ if has_native; then
     check_eq "ws/native: nested session leaves no worktree" "$(worktree_count "$WS_REPO")" "1"
 
     # Command failures still preserve useful changes and propagate the command status.
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'printf "failure-artifact\n" > failure.txt; exit 23') >/dev/null 2>"$WS_REPO/failure.stderr"
     STATUS=$?
     FAILURE_BRANCH=$(branch_with_path "$WS_REPO" failure.txt || true)
@@ -99,7 +99,7 @@ if has_native; then
     WS_REPO=$(make_test_repo)
     BRANCH_COUNT=$(cdm_branches "$WS_REPO" | wc -l | tr -d ' ')
     NO_CHANGES_STDERR=$(mktemp "${TMPDIR:-/tmp}/cdm-ws-no-changes.XXXXXX")
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace true) \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree true) \
         >/dev/null 2>"$NO_CHANGES_STDERR"
     STATUS=$?
     check_eq "ws/native: no-change session succeeds" "$STATUS" "0"
@@ -165,7 +165,7 @@ EOF
         GIT_CONFIG_COUNT=1 \
         GIT_CONFIG_KEY_0=core.hooksPath \
         GIT_CONFIG_VALUE_0="$WS_REPO/env-hooks" \
-        "$CDM" --no-proxy --workspace sh -c '
+        "$CDM" --no-proxy --worktree sh -c '
             gitdir=$(sed -n "s/^gitdir: //p" .git)
             common=$(cd "$gitdir" && cd "$(cat commondir)" && pwd -P)
             if printf redirected > .git 2>/dev/null; then exit 91; fi
@@ -187,12 +187,43 @@ EOF
         "$(worktree_count "$WS_REPO")" "1"
     remove_test_path "$WS_REPO"
 
+    # An isolated child may create a symlink naming a host path it cannot read.
+    # Trusted finalization must record the link itself without following it.
+    WS_REPO=$(make_test_repo)
+    mkdir -p "$WS_REPO/tracked"
+    printf 'tracked-first\n' > "$WS_REPO/tracked/first.txt"
+    printf 'tracked-second\n' > "$WS_REPO/tracked/second.txt"
+    git -C "$WS_REPO" add tracked
+    git -C "$WS_REPO" commit -q -m 'add symlink replacement fixture'
+    OUTSIDE=$(mktemp -d "${TMPDIR:-/tmp}/cdm-worktree-outside.XXXXXX")
+    printf 'outside-secret-sentinel\n' > "$OUTSIDE/first.txt"
+    printf 'another-outside-sentinel\n' > "$OUTSIDE/second.txt"
+    (cd "$WS_REPO" && OUTSIDE="$OUTSIDE" "$CDM" --no-proxy --iso --worktree sh -c '
+        test ! -r "$OUTSIDE/first.txt"
+        command -p rm -rf -- tracked
+        ln -s "$OUTSIDE" tracked
+    ') >/dev/null 2>"$WS_REPO/symlink.stderr"
+    STATUS=$?
+    SYMLINK_BRANCH=$(branch_with_path "$WS_REPO" tracked || true)
+    SYMLINK_MODE=$(git -C "$WS_REPO" ls-tree "$SYMLINK_BRANCH" -- tracked | awk '{print $1}')
+    check_eq "ws/security: isolated ancestor-symlink journey succeeds" "$STATUS" "0"
+    check_eq "ws/security: directory replacement is one Git symlink" "$SYMLINK_MODE" "120000"
+    check_eq "ws/security: finalizer does not commit outside descendant bytes" \
+        "$(if git -C "$WS_REPO" cat-file -e "${SYMLINK_BRANCH}:tracked/first.txt" 2>/dev/null; then echo 0; else echo 1; fi)" \
+        "1"
+    check_eq "ws/security: finalizer records the link target bytes" \
+        "$(git -C "$WS_REPO" show "${SYMLINK_BRANCH}:tracked" 2>/dev/null)" "$OUTSIDE"
+    check_eq "ws/security: ancestor-symlink session leaves no worktree" \
+        "$(worktree_count "$WS_REPO")" "1"
+    remove_test_path "$OUTSIDE"
+    remove_test_path "$WS_REPO"
+
     # The isolated copy should represent the user's current Git-visible work,
     # not silently fall back to a stale HEAD when tracked/untracked edits exist.
     WS_REPO=$(make_test_repo)
     printf 'original\ndirty-tracked\n' > "$WS_REPO/file.txt"
     printf 'dirty-untracked\n' > "$WS_REPO/untracked.txt"
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'grep -q dirty-tracked file.txt && grep -q dirty-untracked untracked.txt && printf "agent\n" > agent.txt') \
         >/dev/null 2>"$WS_REPO/dirty.stderr"
     STATUS=$?
@@ -223,7 +254,7 @@ EOF
     git -C "$WS_REPO" sparse-checkout init --cone
     git -C "$WS_REPO" sparse-checkout set included
     SPARSE_BRANCH_COUNT=$(cdm_branches "$WS_REPO" | wc -l | tr -d ' ')
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'test -f included/file.txt && test ! -e excluded/file.txt') \
         >/dev/null 2>"$WS_REPO/sparse.stderr"
     STATUS=$?
@@ -236,11 +267,11 @@ EOF
     # Branch allocation must also be safe when two agents start before either
     # session has finalized.
     WS_REPO=$(make_test_repo)
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'sleep 1; printf "parallel-one\n" > parallel-one.txt') \
         >/dev/null 2>"$WS_REPO/parallel-one.stderr" &
     PID_ONE=$!
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
         'sleep 1; printf "parallel-two\n" > parallel-two.txt') \
         >/dev/null 2>"$WS_REPO/parallel-two.stderr" &
     PID_TWO=$!
@@ -267,11 +298,11 @@ fi
 echo ""
 
 if has_vm; then
-    section "Workspace + VM lifecycle"
+    section "Worktree + VM lifecycle"
 
     WS_REPO=$(make_test_repo)
     ORIGINAL_HEAD=$(git -C "$WS_REPO" rev-parse HEAD)
-    (cd "$WS_REPO" && "$CDM" --no-proxy --workspace --vm sh -c \
+    (cd "$WS_REPO" && "$CDM" --no-proxy --worktree --vm sh -c \
         'cat file.txt; mkdir -p vm-output; printf "vm-change\n" > vm-output/result.txt') \
         >"$WS_REPO/vm.stdout" 2>"$WS_REPO/vm.stderr"
     STATUS=$?
@@ -290,7 +321,7 @@ if has_vm; then
 
     if [ "${CDM_OCI_TESTS:-0}" = "1" ]; then
         WS_REPO=$(make_test_repo)
-        (cd "$WS_REPO" && "$CDM" --no-proxy --workspace --vmi alpine:3.21 sh -c \
+        (cd "$WS_REPO" && "$CDM" --no-proxy --worktree --vmi alpine:3.21 sh -c \
             'printf "oci-change\n" > oci.txt') >/dev/null 2>"$WS_REPO/oci.stderr"
         STATUS=$?
         OCI_BRANCH=$(branch_with_path "$WS_REPO" oci.txt || true)

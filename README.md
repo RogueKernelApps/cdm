@@ -40,7 +40,7 @@ cdm sh -c 'printf "%s\n" "$HOME" | sort'
 | Destination policy | `cdm --scramble --allow-domains registry.npmjs.org npm install` | Restricts proxied egress to an allowlist |
 | Direct network while scrambling | `cdm --scramble --no-proxy tool` | Keeps fake values but disables restoration and domain filtering |
 | Hardened mode | `cdm --sec ./untrusted-checker` | Implies scrambling and adds persistence protections; uses deny-first capabilities on macOS |
-| Temporary Git workspace | `cdm --workspace agent` | Runs in an isolated worktree and saves changes to a generated `CDM__...` branch |
+| Temporary Git worktree | `cdm --worktree agent` | Runs in an isolated worktree and saves changes to a generated `CDM__...` branch |
 | macOS application mode | `cdm "/Applications/Example.app"` | Validates the bundle and infers narrow app-owned writable paths |
 | Session report | `cdm --report-json .cdm-session.json --stats npm test` | Writes a redacted JSON report and compact stderr statistics |
 | Denial monitor | `cdm --monitor npm test` | Streams platform sandbox denials; setup is fail-closed |

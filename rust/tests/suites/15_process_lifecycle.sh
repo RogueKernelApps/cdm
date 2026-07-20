@@ -47,11 +47,11 @@ section "Worktree cleanup after child signal"
 
 if has_native && command -v git >/dev/null 2>&1; then
     SIGNAL_REPO=$(make_test_repo)
-    (cd "$SIGNAL_REPO" && "$CDM" --no-proxy --workspace -- sh -c \
+    (cd "$SIGNAL_REPO" && "$CDM" --no-proxy --worktree -- sh -c \
         'printf "preserved\n" > signalled.txt; kill -TERM $$') \
         >/dev/null 2>"$LIFECYCLE_ROOT/worktree-signal.stderr"
     RC=$?
-    check_eq "workspace: child signal maps to 128 + SIGTERM" "$RC" "143"
+    check_eq "worktree: child signal maps to 128 + SIGTERM" "$RC" "143"
 
     SIGNAL_BRANCH=""
     for branch in $(git -C "$SIGNAL_REPO" for-each-ref \
@@ -61,14 +61,14 @@ if has_native && command -v git >/dev/null 2>&1; then
             break
         fi
     done
-    check_nonempty "workspace: changes survive child signal" "$SIGNAL_BRANCH"
+    check_nonempty "worktree: changes survive child signal" "$SIGNAL_BRANCH"
     if [ -n "$SIGNAL_BRANCH" ]; then
-        check_eq "workspace: signalled result is committed" \
+        check_eq "worktree: signalled result is committed" \
             "$(git -C "$SIGNAL_REPO" show "${SIGNAL_BRANCH}:signalled.txt")" "preserved"
     fi
-    check_eq "workspace: signalled run leaves original checkout unchanged" \
+    check_eq "worktree: signalled run leaves original checkout unchanged" \
         "$(test ! -e "$SIGNAL_REPO/signalled.txt"; echo $?)" "0"
-    check_eq "workspace: signalled run removes temporary worktree" \
+    check_eq "worktree: signalled run removes temporary worktree" \
         "$(git -C "$SIGNAL_REPO" worktree list --porcelain | grep -c '^worktree ')" "1"
     remove_test_path "$SIGNAL_REPO"
 else

@@ -57,7 +57,7 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 | `--allow-private-network` | Permit private or host-local proxy destinations only when a non-empty domain allowlist explicitly matches the requested host or IP. |
 | `--vm` | Run inside a libkrun microVM (bundled Alpine rootfs); requires a `--features vm` build. |
 | `--vmi <image>` | Run inside a libkrun microVM with an OCI image (e.g. `ubuntu:24.04`); requires a `--features vm` build. |
-| `--workspace` | Run against a temporary Git worktree and save resulting changes on a generated branch. |
+| `--worktree` | Run against a temporary Git worktree and save resulting changes on a generated branch. |
 | `--report-json <path>` | Atomically write a private, schema-versioned, redacted session report. |
 | `--stats` | Write compact aggregate session statistics to stderr without changing child stdout. |
 
@@ -130,9 +130,9 @@ An existing `.app` directory in command position activates application mode auto
 
 Discovery is deterministic and static. Optional plist keys may be absent, but malformed or unreadable plist data is an error rather than an absent-key fallback. CDM does not run the application unsandboxed, trace unrelated processes, or honor arbitrary path declarations from bundle content. Explicit grants remain the contract for state whose location is computed only at runtime. `--app` does not alter proxy/network policy and is macOS-only.
 
-### Git workspace lifecycle
+### Git worktree lifecycle
 
-`--workspace` requires a Git repository with at least one commit. CDM must:
+`--worktree` requires a Git repository with at least one commit. CDM must:
 
 1. Create a detached `--no-checkout` worktree from the original repository's `HEAD`, then copy the caller's materialized tracked regular files, executable bits, symlinks, and gitlink directories directly from the filesystem. Creation must not invoke diff, checkout hooks, or clean/smudge/process filters. Missing sparse `S`/`s` index entries remain absent and retain their base-tree entries; other missing tracked entries are recorded as deletions.
 2. Copy every non-ignored untracked file. Git-ignored paths remain excluded. Filter-materialized bytes that differ from their stored blob, including materialized Git LFS content, are raw result bytes; CDM must not execute a clean filter in the trusted host to recreate a pointer or transformed blob.
@@ -140,9 +140,9 @@ Discovery is deterministic and static. Optional plist keys may be absent, but ma
 4. Atomically reserve a human-readable `CDM__<date>__<project>__<user>` result branch, adding a numeric suffix for repeated or concurrent sessions.
 5. Run the chosen native or VM sandbox against the temporary worktree without modifying the original checkout.
 6. Before sandbox entry, capture the exact identity of the worktree `.git` gitfile, its resolved actual Git directory, the common Git directory, and the trusted system Git executable. Hard write-deny every metadata path in native and VM policy and reject finalization if any pinned identity or gitfile bytes changed.
-7. If there are changes, snapshot Git-visible paths with plumbing that hashes raw file/symlink bytes, writes a private temporary index/tree, creates a single-parent commit without porcelain hooks, filters, signing, prompts, pagers, or fsmonitor, and compare-and-swaps only the reserved ref. Every trusted Git process must use the pinned executable and a cleared, narrowly rebuilt environment. Preserve changes even when the sandboxed command exits nonzero.
+7. If there are changes, open the worktree root once and inspect every Git-visible path descriptor-relatively without following symlink ancestors. Hash regular files from already-open no-follow descriptors; hash symlink target bytes without following them. Replacing a tracked directory with a symlink removes its former descendants and records one mode-`120000` entry. Use plumbing to write a private temporary index/tree, create a single-parent commit without porcelain hooks, filters, signing, prompts, pagers, or fsmonitor, and compare-and-swap only the reserved ref. Every trusted Git process must use the pinned executable and a cleared, narrowly rebuilt environment. Preserve changes even when the sandboxed command exits nonzero.
 8. If there are no changes, delete the reserved branch. In both cases, remove the temporary worktree.
-9. Return the sandboxed command's exit status unless workspace finalization itself fails; an otherwise successful command then becomes a CDM error.
+9. Return the sandboxed command's exit status unless worktree finalization itself fails; an otherwise successful command then becomes a CDM error.
 
 The summary uses the exact original commit when showing the result diff. A setup failure must remove both the worktree and reserved branch.
 
@@ -553,14 +553,14 @@ When `--monitor` is passed:
 
 ## 9. Hard Denials and Path Resolution
 
-CDM integrity paths are always read-only inside the sandbox, even if they fall inside a writable directory tree or explicit grant. Discovered sensitive files are also hard read- and write-denied. Persistence-oriented control paths are added only by `--sec`; explicit configured denials continue to apply in every mode. In `--workspace` mode, the ephemeral `.git` gitfile plus its pinned actual and common Git directories are invocation-specific hard write denials even though ordinary workspace content is RW. The effective VM rootfs cache (`$CDM_CACHE_DIR/rootfs`, or `~/.cdm/rootfs`) is hard read- and write-denied to the child.
+CDM integrity paths are always read-only inside the sandbox, even if they fall inside a writable directory tree or explicit grant. Discovered sensitive files are also hard read- and write-denied. Persistence-oriented control paths are added only by `--sec`; explicit configured denials continue to apply in every mode. In `--worktree` mode, the ephemeral `.git` gitfile plus its pinned actual and common Git directories are invocation-specific hard write denials even though ordinary workspace content is RW. The effective VM rootfs cache (`$CDM_CACHE_DIR/rootfs`, or `~/.cdm/rootfs`) is hard read- and write-denied to the child.
 
 | Path | Reason |
 |------|--------|
 | Global config/trust-store directory and project `.cdm` directory | Always: prevent policy mutation or parent replacement |
 | Private invocation runtime and effective VM rootfs cache | Always: preserve trusted runtime state |
 | Discovered sensitive files | When discovered by `--scramble` or `--sec`: prevent real secret disclosure or mutation |
-| `--workspace` gitfile, actual Git directory, and common Git directory | Always: prevent post-sandbox Git redirection, hooks, filters, ref/index mutation, and host execution |
+| `--worktree` gitfile, actual Git directory, and common Git directory | Always: prevent post-sandbox Git redirection, hooks, filters, ref/index mutation, and host execution |
 | Shell startup/logout files | `--sec`: prevent shell injection and persistence |
 | Global `.gitconfig`, `.gitmodules`, `.ripgreprc`, `.mcp.json`, and Git hooks | `--sec`: prevent trusted-tool and Git execution-policy mutation |
 | `.ssh/authorized_keys`, `.ssh/authorized_keys2`, `.ssh/config` | `--sec`: prevent SSH access modification |
@@ -570,7 +570,7 @@ CDM integrity paths are always read-only inside the sandbox, even if they fall i
 
 Relative paths are resolved relative to `$HOME`. Absolute paths used as-is.
 
-For global and preset `paths.allow_ro`, `paths.allow_rw`, `paths.deny_read`, and `paths.deny_write`, relative paths resolve from `$HOME`; trusted project paths resolve from its discovered root. CLI grant paths resolve from the effective workspace after `--workspace`; `~` resolves from `$HOME`. Explicit grants must exist and are canonicalized before sandbox setup. Unknown or legacy JSON fields are errors.
+For global and preset `paths.allow_ro`, `paths.allow_rw`, `paths.deny_read`, and `paths.deny_write`, relative paths resolve from `$HOME`; trusted project paths resolve from its discovered root. CLI grant paths resolve from the effective workspace after `--worktree`; `~` resolves from `$HOME`. Explicit grants must exist and are canonicalized before sandbox setup. Unknown or legacy JSON fields are errors.
 
 Resolution happens exactly once after application discovery, worktree selection, secret discovery, and staging. Each hard-denial rule records its source, lexical directory entry, then-current canonical target (including a would-be target beneath a symlinked ancestor), existence, and captured file/directory kind. Adapters consume this immutable snapshot and enforce both distinct spellings; they do not re-run `canonicalize`, `exists`, or `is_dir` during launch.
 

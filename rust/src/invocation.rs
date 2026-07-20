@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::{
     access, app, cli, config, discover_launch_project, guard, monitor, network, proxy, report,
-    sandbox, secrets, stage, workspace,
+    sandbox, secrets, stage, worktree,
 };
 
 mod lifecycle;
@@ -164,13 +164,13 @@ pub fn run(args: cli::RunArgs) -> i32 {
     }
     lifecycle.set_failure_stage(report::LaunchStage::Setup);
 
-    // --- Workspace Mode ---
-    if args.workspace {
+    // --- Worktree Mode ---
+    if args.worktree {
         lifecycle.record_phase_now(
             report::LifecyclePhase::Worktree,
             report::PhaseState::Started,
         );
-        match workspace::create_worktree(&cfg.work_dir) {
+        match worktree::create_worktree(&cfg.work_dir) {
             Ok(info) => {
                 lifecycle.record_phase_now(
                     report::LifecyclePhase::Worktree,
@@ -178,17 +178,17 @@ pub fn run(args: cli::RunArgs) -> i32 {
                 );
                 let _ = writeln!(
                     io::stderr(),
-                    "[cdm] workspace: {}",
+                    "[cdm] worktree: {}",
                     info.worktree_dir.display()
                 );
-                for path in workspace::protected_metadata_paths(&info) {
+                for path in worktree::protected_metadata_paths(&info) {
                     cfg.access.add_runtime_deny_write(path);
                 }
                 cfg.work_dir = info.execution_dir.clone();
                 lifecycle.attach_worktree(info);
             }
             Err(e) => {
-                eprintln!("[cdm] error: workspace: {}", e);
+                eprintln!("[cdm] error: worktree: {}", e);
                 lifecycle.mark_worktree_setup_failed();
                 return 1;
             }

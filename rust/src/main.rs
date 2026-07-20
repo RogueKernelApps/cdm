@@ -23,7 +23,7 @@ mod sandbox;
 mod secrets;
 mod stage;
 mod trusted_exec;
-mod workspace;
+mod worktree;
 
 const VERSION: &str = "0.1.0";
 

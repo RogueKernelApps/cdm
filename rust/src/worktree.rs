@@ -1,21 +1,257 @@
-//! Ephemeral workspace management via git worktrees.
+//! Ephemeral Git worktree management.
 //!
-//! When `--workspace` mode is active, CDM creates a git worktree copy of the
+//! When `--worktree` mode is active, CDM creates a git worktree copy of the
 //! current repo, sandboxes the command against the worktree (not the real
 //! codebase), and on exit commits any changes to a named branch.
 //!
 //! All git operations use `std::process::Command` — no git library dependency.
 
 use std::collections::BTreeSet;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
 use std::io;
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::SystemTime;
+
+enum WorktreeEntry {
+    Missing,
+    Regular { file: File, executable: bool },
+    Symlink { relative: PathBuf, target: OsString },
+    Directory,
+}
+
+struct WorktreeRoot {
+    fd: OwnedFd,
+}
+
+impl WorktreeRoot {
+    fn open(path: &Path) -> io::Result<Self> {
+        let path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "worktree path contains NUL")
+        })?;
+        // SAFETY: `path` is a valid NUL-terminated string and the returned fd
+        // is immediately transferred into `OwnedFd`.
+        let fd = unsafe {
+            libc::open(
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            )
+        };
+        Ok(Self { fd: owned_fd(fd)? })
+    }
+
+    fn inspect(&self, relative: &Path) -> io::Result<WorktreeEntry> {
+        let components = relative
+            .components()
+            .map(|component| match component {
+                std::path::Component::Normal(value) => c_name(value),
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("invalid Git snapshot path: {}", relative.display()),
+                )),
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        if components.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "empty Git snapshot path",
+            ));
+        }
+
+        let mut parent = duplicate_fd(&self.fd)?;
+        let mut prefix = PathBuf::new();
+        for component in &components[..components.len() - 1] {
+            prefix.push(OsStr::from_bytes(component.as_bytes()));
+            match open_directory_at(&parent, component) {
+                Ok(next) => parent = next,
+                Err(error) if error.raw_os_error() == Some(libc::ENOENT) => {
+                    return Ok(WorktreeEntry::Missing);
+                }
+                Err(error)
+                    if matches!(
+                        error.raw_os_error(),
+                        Some(libc::ELOOP) | Some(libc::ENOTDIR)
+                    ) =>
+                {
+                    let stat = stat_at(&parent, component)?;
+                    if file_type(stat.st_mode) == libc::S_IFLNK {
+                        return Ok(WorktreeEntry::Symlink {
+                            relative: prefix,
+                            target: read_link_at(&parent, component)?,
+                        });
+                    }
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "non-directory ancestor in Git snapshot path: {}",
+                            relative.display()
+                        ),
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        let leaf = components
+            .last()
+            .expect("non-empty components checked above");
+        let stat = match stat_at(&parent, leaf) {
+            Ok(stat) => stat,
+            Err(error) if error.raw_os_error() == Some(libc::ENOENT) => {
+                return Ok(WorktreeEntry::Missing);
+            }
+            Err(error) => return Err(error),
+        };
+        match file_type(stat.st_mode) {
+            libc::S_IFREG => {
+                // SAFETY: `parent` and `leaf` are valid descriptors/strings;
+                // `O_NOFOLLOW` prevents a raced leaf symlink from being opened.
+                let fd = unsafe {
+                    libc::openat(
+                        parent.as_raw_fd(),
+                        leaf.as_ptr(),
+                        libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                    )
+                };
+                let fd = owned_fd(fd)?;
+                let opened = fstat(&fd)?;
+                if file_type(opened.st_mode) != libc::S_IFREG {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Git snapshot path changed type: {}", relative.display()),
+                    ));
+                }
+                Ok(WorktreeEntry::Regular {
+                    file: File::from(fd),
+                    executable: opened.st_mode & 0o111 != 0,
+                })
+            }
+            libc::S_IFLNK => Ok(WorktreeEntry::Symlink {
+                relative: relative.to_path_buf(),
+                target: read_link_at(&parent, leaf)?,
+            }),
+            libc::S_IFDIR => Ok(WorktreeEntry::Directory),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported file type in Git snapshot: {}",
+                    relative.display()
+                ),
+            )),
+        }
+    }
+}
+
+fn c_name(value: &OsStr) -> io::Result<CString> {
+    CString::new(value.as_bytes()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Git snapshot path component contains NUL",
+        )
+    })
+}
+
+fn duplicate_fd(fd: &OwnedFd) -> io::Result<OwnedFd> {
+    // SAFETY: `fd` is valid and the duplicated descriptor is immediately owned.
+    let duplicated = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
+    owned_fd(duplicated)
+}
+
+fn open_directory_at(parent: &OwnedFd, name: &CString) -> io::Result<OwnedFd> {
+    // SAFETY: `parent` and `name` are valid; ownership of the result is
+    // transferred immediately.
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    owned_fd(fd)
+}
+
+fn owned_fd(fd: libc::c_int) -> io::Result<OwnedFd> {
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        // SAFETY: a successful syscall returned a new descriptor owned here.
+        Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    }
+}
+
+fn stat_at(parent: &OwnedFd, name: &CString) -> io::Result<libc::stat> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: pointers are valid and `stat` is initialized on success.
+    let result = unsafe {
+        libc::fstatat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result == 0 {
+        // SAFETY: successful `fstatat` initialized the value.
+        Ok(unsafe { stat.assume_init() })
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn fstat(fd: &OwnedFd) -> io::Result<libc::stat> {
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: the descriptor and output pointer are valid.
+    let result = unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) };
+    if result == 0 {
+        // SAFETY: successful `fstat` initialized the value.
+        Ok(unsafe { stat.assume_init() })
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+fn file_type(mode: libc::mode_t) -> libc::mode_t {
+    mode & libc::S_IFMT
+}
+
+fn read_link_at(parent: &OwnedFd, name: &CString) -> io::Result<OsString> {
+    let mut capacity = 256usize;
+    loop {
+        let mut buffer = vec![0u8; capacity];
+        // SAFETY: the descriptor/name are valid and the buffer is writable for
+        // exactly `capacity` bytes.
+        let length = unsafe {
+            libc::readlinkat(
+                parent.as_raw_fd(),
+                name.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+            )
+        };
+        if length < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = length as usize;
+        if length < buffer.len() {
+            buffer.truncate(length);
+            return Ok(OsString::from_vec(buffer));
+        }
+        capacity = capacity
+            .checked_mul(2)
+            .filter(|size| *size <= 65_536)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "worktree symlink target is too long",
+                )
+            })?;
+    }
+}
 
 /// Information about an active worktree session.
 pub struct WorktreeInfo {
@@ -303,7 +539,7 @@ pub fn print_summary(result: &WorktreeResult) {
 
     match result {
         WorktreeResult::NoChanges => {
-            let _ = writeln!(err, "[cdm] workspace: no changes, cleaned up");
+            let _ = writeln!(err, "[cdm] worktree: no changes, cleaned up");
         }
         WorktreeResult::Committed {
             branch,
@@ -314,10 +550,10 @@ pub fn print_summary(result: &WorktreeResult) {
         } => {
             let _ = writeln!(
                 err,
-                "[cdm] workspace: {} files changed, {} insertions(+), {} deletions(-)",
+                "[cdm] worktree: {} files changed, {} insertions(+), {} deletions(-)",
                 files_changed, insertions, deletions
             );
-            let _ = writeln!(err, "[cdm] workspace: changes saved to branch {}", branch);
+            let _ = writeln!(err, "[cdm] worktree: changes saved to branch {}", branch);
             let _ = writeln!(err, "[cdm]");
             let _ = writeln!(
                 err,
@@ -750,6 +986,7 @@ fn canonical_git_path(cwd: &Path, value: &str) -> io::Result<PathBuf> {
 
 fn build_result_tree(info: &WorktreeInfo) -> io::Result<String> {
     info.metadata.validate()?;
+    let worktree = WorktreeRoot::open(&info.worktree_dir)?;
     let mut paths = BTreeSet::new();
     for args in [
         &["ls-files", "--cached", "-z", "--"][..],
@@ -791,74 +1028,80 @@ fn build_result_tree(info: &WorktreeInfo) -> io::Result<String> {
 
     let mut index_info = Vec::new();
     let mut removals = Vec::new();
+    let mut collapsed_symlinks: BTreeSet<Vec<u8>> = BTreeSet::new();
     for encoded in paths {
         let relative = PathBuf::from(OsString::from_vec(encoded.clone()));
-        let path = info.worktree_dir.join(&relative);
-        let metadata = match std::fs::symlink_metadata(&path) {
-            Ok(metadata) => metadata,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        if collapsed_symlinks
+            .iter()
+            .any(|prefix| is_git_descendant(&encoded, prefix))
+        {
+            removals.push(relative);
+            continue;
+        }
+        let (effective_path, mode, object_type, object) = match worktree.inspect(&relative)? {
+            WorktreeEntry::Missing => {
                 if info.observed_tracked_paths.contains(&encoded) {
                     removals.push(relative);
                 }
                 continue;
             }
-            Err(error) => return Err(error),
-        };
-        let (mode, object_type, object) = if metadata.file_type().is_symlink() {
-            let target = std::fs::read_link(&path)?;
-            (
-                "120000",
-                "blob",
-                hash_bytes(&info.git, &info.repo_root, target.as_os_str().as_bytes())?,
-            )
-        } else if metadata.is_file() {
-            let mode = if metadata.permissions().mode() & 0o111 != 0 {
-                "100755"
-            } else {
-                "100644"
-            };
-            (mode, "blob", hash_file(&info.git, &info.repo_root, &path)?)
-        } else if metadata.is_dir() {
-            let entry = info.git.run_bytes(
-                &[
-                    "ls-files",
-                    "--stage",
-                    "-z",
-                    "--",
-                    &relative.to_string_lossy(),
-                ],
-                &info.worktree_dir,
-            )?;
-            let entry = entry.split(|byte| *byte == 0).next().unwrap_or_default();
-            let header = entry
-                .split(|byte| *byte == b'\t')
-                .next()
-                .unwrap_or_default();
-            let mut fields = header.split(|byte| *byte == b' ');
-            let mode = fields.next().unwrap_or_default();
-            let object = fields.next().unwrap_or_default();
-            if mode != b"160000" || object.is_empty() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "unsupported directory in Git snapshot: {}",
-                        relative.display()
-                    ),
-                ));
+            WorktreeEntry::Symlink { relative, target } => {
+                let effective = relative.as_os_str().as_bytes().to_vec();
+                validate_git_relative_path(&effective)?;
+                if effective != encoded {
+                    removals.push(PathBuf::from(OsString::from_vec(encoded)));
+                }
+                if !collapsed_symlinks.insert(effective.clone()) {
+                    continue;
+                }
+                (
+                    effective,
+                    "120000",
+                    "blob",
+                    hash_bytes(&info.git, &info.repo_root, target.as_os_str().as_bytes())?,
+                )
             }
-            (
-                "160000",
-                "commit",
-                String::from_utf8_lossy(object).to_string(),
-            )
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "unsupported file type in Git snapshot: {}",
-                    relative.display()
-                ),
-            ));
+            WorktreeEntry::Regular { file, executable } => (
+                encoded,
+                if executable { "100755" } else { "100644" },
+                "blob",
+                hash_file(&info.git, &info.repo_root, file)?,
+            ),
+            WorktreeEntry::Directory => {
+                let entry = info.git.run_bytes(
+                    &[
+                        "ls-files",
+                        "--stage",
+                        "-z",
+                        "--",
+                        &relative.to_string_lossy(),
+                    ],
+                    &info.worktree_dir,
+                )?;
+                let entry = entry.split(|byte| *byte == 0).next().unwrap_or_default();
+                let header = entry
+                    .split(|byte| *byte == b'\t')
+                    .next()
+                    .unwrap_or_default();
+                let mut fields = header.split(|byte| *byte == b' ');
+                let mode = fields.next().unwrap_or_default();
+                let object = fields.next().unwrap_or_default();
+                if mode != b"160000" || object.is_empty() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "unsupported directory in Git snapshot: {}",
+                            relative.display()
+                        ),
+                    ));
+                }
+                (
+                    encoded,
+                    "160000",
+                    "commit",
+                    String::from_utf8_lossy(object).to_string(),
+                )
+            }
         };
         index_info.extend_from_slice(mode.as_bytes());
         index_info.push(b' ');
@@ -866,7 +1109,7 @@ fn build_result_tree(info: &WorktreeInfo) -> io::Result<String> {
         index_info.push(b' ');
         index_info.extend_from_slice(object.trim().as_bytes());
         index_info.push(b'\t');
-        index_info.extend_from_slice(&encoded);
+        index_info.extend_from_slice(effective_path.as_slice());
         index_info.push(0);
     }
     remove_index_paths(&info.git, &info.repo_root, &index, &removals)?;
@@ -879,6 +1122,10 @@ fn build_result_tree(info: &WorktreeInfo) -> io::Result<String> {
     let tree = run_git_with_index(&info.git, &["write-tree"], &info.repo_root, &index)?;
     index_guard.finish()?;
     Ok(tree)
+}
+
+fn is_git_descendant(path: &[u8], prefix: &[u8]) -> bool {
+    path.len() > prefix.len() && path.starts_with(prefix) && path.get(prefix.len()) == Some(&b'/')
 }
 
 fn remove_index_paths(
@@ -931,12 +1178,12 @@ fn validate_git_relative_path(path: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-fn hash_file(git: &TrustedGit, cwd: &Path, path: &Path) -> io::Result<String> {
+fn hash_file(git: &TrustedGit, cwd: &Path, file: File) -> io::Result<String> {
     let output = git.run_with_input(
         &["hash-object", "-w", "--stdin", "--no-filters"],
         cwd,
         None,
-        File::open(path)?,
+        file,
     )?;
     Ok(String::from_utf8_lossy(&output).trim().to_string())
 }

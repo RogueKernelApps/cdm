@@ -78,7 +78,7 @@ pub struct RunArgs {
     pub vmi: Option<String>,
     /// Run against a temporary Git worktree.
     #[arg(long)]
-    pub workspace: bool,
+    pub worktree: bool,
     /// Write a schema-versioned, redacted JSON session report.
     #[arg(long, value_name = "PATH")]
     pub report_json: Option<PathBuf>,

@@ -9,11 +9,11 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::{access, monitor, network, proxy, report, sandbox, workspace};
+use crate::{access, monitor, network, proxy, report, sandbox, worktree};
 
 pub(super) struct InvocationLifecycle {
     runtime: Option<RuntimeCleanup>,
-    worktree: Option<workspace::WorktreeInfo>,
+    worktree: Option<worktree::WorktreeInfo>,
     proxy: Option<proxy::ProxySession>,
     monitor: Option<monitor::Monitor>,
     // Keep the fail-safe publisher last so resource Drop implementations run
@@ -116,7 +116,7 @@ impl InvocationLifecycle {
         self.runtime = Some(RuntimeCleanup::new(path));
     }
 
-    pub(super) fn attach_worktree(&mut self, worktree: workspace::WorktreeInfo) {
+    pub(super) fn attach_worktree(&mut self, worktree: worktree::WorktreeInfo) {
         debug_assert!(self.worktree.is_none());
         self.worktree = Some(worktree);
     }
@@ -188,13 +188,13 @@ impl InvocationLifecycle {
                 report::PhaseState::Started,
             );
             eprintln!(
-                "[cdm] workspace: finalizing {}...",
+                "[cdm] worktree: finalizing {}...",
                 worktree.worktree_dir.display()
             );
-            match workspace::finalize_worktree(&worktree) {
+            match worktree::finalize_worktree(&worktree) {
                 Ok(result) => {
                     self.report.report.outcome.worktree = report_worktree_outcome(&result);
-                    workspace::print_summary(&result);
+                    worktree::print_summary(&result);
                     self.report.report.record_phase(
                         self.elapsed_ms(),
                         report::LifecyclePhase::Worktree,
@@ -202,7 +202,7 @@ impl InvocationLifecycle {
                     );
                 }
                 Err(error) => {
-                    eprintln!("[cdm] error: workspace finalization: {error}");
+                    eprintln!("[cdm] error: worktree finalization: {error}");
                     self.report.report.outcome.worktree = report::WorktreeOutcome::Failed {
                         stage: report::WorktreeStage::Finalize,
                     };
@@ -248,10 +248,10 @@ impl InvocationLifecycle {
         let Some(worktree) = self.worktree.take() else {
             return;
         };
-        match workspace::discard_worktree(&worktree) {
+        match worktree::discard_worktree(&worktree) {
             Ok(()) => self.report.report.outcome.worktree = report::WorktreeOutcome::Discarded,
             Err(error) => {
-                eprintln!("[cdm] error: workspace cleanup: {error}");
+                eprintln!("[cdm] error: worktree cleanup: {error}");
                 self.report.report.outcome.worktree = report::WorktreeOutcome::Failed {
                     stage: report::WorktreeStage::Remove,
                 };
@@ -505,10 +505,10 @@ fn apply_proxy_stats(report: &mut report::SessionReport, stats: proxy::ProxyStat
     }
 }
 
-fn report_worktree_outcome(result: &workspace::WorktreeResult) -> report::WorktreeOutcome {
+fn report_worktree_outcome(result: &worktree::WorktreeResult) -> report::WorktreeOutcome {
     match result {
-        workspace::WorktreeResult::NoChanges => report::WorktreeOutcome::NoChanges,
-        workspace::WorktreeResult::Committed {
+        worktree::WorktreeResult::NoChanges => report::WorktreeOutcome::NoChanges,
+        worktree::WorktreeResult::Committed {
             files_changed,
             insertions,
             deletions,

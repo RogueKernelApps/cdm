@@ -4,6 +4,7 @@
 
 use super::*;
 use std::fs;
+use std::os::unix::fs::symlink;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Monotonic counter to ensure unique temp dir names across parallel tests.
@@ -377,6 +378,56 @@ fn test_finalize_with_changes() {
 }
 
 #[test]
+fn finalize_preserves_a_directory_replaced_by_a_symlink_without_reading_its_target() {
+    let repo = create_test_repo();
+    let tracked = repo.join("tracked");
+    fs::create_dir(&tracked).unwrap();
+    fs::write(tracked.join("first.txt"), "tracked first\n").unwrap();
+    fs::write(tracked.join("second.txt"), "tracked second\n").unwrap();
+    run_git(&["add", "tracked"], &repo).unwrap();
+    run_git(&["commit", "-m", "add tracked directory"], &repo).unwrap();
+
+    let info = create_worktree(&repo).unwrap();
+    let branch_name = info.branch_name.clone();
+    let outside = repo.with_file_name(format!(
+        "{}-outside",
+        repo.file_name().unwrap().to_string_lossy()
+    ));
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("first.txt"), "outside secret sentinel\n").unwrap();
+    fs::write(outside.join("second.txt"), "another outside sentinel\n").unwrap();
+
+    fs::remove_dir_all(info.worktree_dir.join("tracked")).unwrap();
+    symlink(&outside, info.worktree_dir.join("tracked")).unwrap();
+
+    let result = finalize_worktree(&info).unwrap();
+    assert!(matches!(result, WorktreeResult::Committed { .. }));
+
+    let entry = run_git(&["ls-tree", &branch_name, "--", "tracked"], &repo).unwrap();
+    assert!(
+        entry.starts_with("120000 blob "),
+        "directory replacement should be recorded as one symlink: {entry:?}"
+    );
+    assert!(
+        run_git(
+            &[
+                "cat-file",
+                "-e",
+                &format!("{branch_name}:tracked/first.txt")
+            ],
+            &repo,
+        )
+        .is_err(),
+        "finalization must not follow the symlink and commit outside file bytes"
+    );
+    let target = run_git(&["show", &format!("{branch_name}:tracked")], &repo).unwrap();
+    assert_eq!(target.as_bytes(), outside.as_os_str().as_bytes());
+
+    cleanup(&outside);
+    cleanup(&repo);
+}
+
+#[test]
 fn finalize_never_runs_repository_hooks() {
     let repo = create_test_repo();
     let marker = repo.parent().unwrap().join(format!(
@@ -547,7 +598,7 @@ fn sparse_checkout_absence_is_preserved_without_becoming_a_deletion() {
 }
 
 #[test]
-fn workspace_lifecycle_never_runs_repository_process_filters() {
+fn worktree_lifecycle_never_runs_repository_process_filters() {
     let repo = create_test_repo();
     let marker = repo.parent().unwrap().join(format!(
         "cdm-test-process-filter-fired-{}-{}",
