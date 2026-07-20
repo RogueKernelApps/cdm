@@ -12,6 +12,7 @@ use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 
+use crate::anchored::AnchoredRoot;
 use crate::config::CdmConfig;
 use crate::network::DestinationPattern;
 
@@ -23,6 +24,13 @@ pub struct SecretMapping {
     /// real value → fake value (used during obfuscation)
     pub real_to_fake: HashMap<String, String>,
     restoration_scopes: HashMap<String, Vec<DestinationPattern>>,
+    environment_replacements: HashMap<String, EnvironmentReplacement>,
+}
+
+#[derive(Clone)]
+struct EnvironmentReplacement {
+    real: String,
+    fake: String,
 }
 
 impl SecretMapping {
@@ -31,6 +39,7 @@ impl SecretMapping {
             fake_to_real: HashMap::new(),
             real_to_fake: HashMap::new(),
             restoration_scopes: HashMap::new(),
+            environment_replacements: HashMap::new(),
         }
     }
 
@@ -64,9 +73,10 @@ impl SecretMapping {
             merge_destinations(&mut self.restoration_scopes, fake, destinations);
             return Ok(fake.clone());
         }
+        self.reject_fake_as_real(&real)?;
         for _ in 0..MAX_FAKE_ATTEMPTS {
             let fake = generate_fake(&real)?;
-            if !self.fake_to_real.contains_key(&fake) && !self.real_to_fake.contains_key(&fake) {
+            if self.fake_is_available(&real, &fake) {
                 self.fake_to_real.insert(fake.clone(), real.clone());
                 self.real_to_fake.insert(real, fake.clone());
                 merge_destinations(&mut self.restoration_scopes, &fake, destinations);
@@ -75,6 +85,53 @@ impl SecretMapping {
         }
         Err(io::Error::other(
             "could not create a unique secret replacement after bounded retries",
+        ))
+    }
+
+    fn add_environment_scoped(
+        &mut self,
+        name: String,
+        real: String,
+        destinations: Vec<DestinationPattern>,
+    ) -> io::Result<String> {
+        if real.len() >= MIN_GLOBAL_SECRET_LENGTH {
+            return self.add_scoped(real, destinations);
+        }
+        if let Some(existing) = self.environment_replacements.get(&name) {
+            if existing.real != real {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "secret environment value changed during preparation",
+                ));
+            }
+            merge_destinations(&mut self.restoration_scopes, &existing.fake, destinations);
+            return Ok(existing.fake.clone());
+        }
+        let mut random = OsRandom;
+        for _ in 0..MAX_FAKE_ATTEMPTS {
+            let fake = generate_environment_fake(&mut random)?;
+            if self.fake_to_real.contains_key(&fake)
+                || self.real_to_fake.contains_key(&fake)
+                || self
+                    .real_to_fake
+                    .keys()
+                    .any(|known_real| fake.contains(known_real))
+            {
+                continue;
+            }
+            self.fake_to_real.insert(fake.clone(), real.clone());
+            merge_destinations(&mut self.restoration_scopes, &fake, destinations);
+            self.environment_replacements.insert(
+                name,
+                EnvironmentReplacement {
+                    real,
+                    fake: fake.clone(),
+                },
+            );
+            return Ok(fake);
+        }
+        Err(io::Error::other(
+            "could not create a unique environment secret replacement after bounded retries",
         ))
     }
 
@@ -87,13 +144,11 @@ impl SecretMapping {
         if let Some(fake) = self.real_to_fake.get(&real) {
             return Ok(fake.clone());
         }
+        self.reject_fake_as_real(&real)?;
 
         for _ in 0..MAX_FAKE_ATTEMPTS {
             let fake = generate_fake_with_random(&real, random)?;
-            if fake != real
-                && !self.fake_to_real.contains_key(&fake)
-                && !self.real_to_fake.contains_key(&fake)
-            {
+            if self.fake_is_available(&real, &fake) {
                 self.fake_to_real.insert(fake.clone(), real.clone());
                 self.real_to_fake.insert(real, fake.clone());
                 return Ok(fake);
@@ -105,52 +160,72 @@ impl SecretMapping {
         ))
     }
 
+    fn reject_fake_as_real(&self, real: &str) -> io::Result<()> {
+        if self.fake_to_real.keys().any(|fake| fake.contains(real)) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "secret mapping real and replacement values overlap",
+            ));
+        }
+        Ok(())
+    }
+
+    fn fake_is_available(&self, real: &str, fake: &str) -> bool {
+        fake != real
+            && !self.fake_to_real.contains_key(fake)
+            && !self.real_to_fake.contains_key(fake)
+            && !fake.contains(real)
+            && !self
+                .real_to_fake
+                .keys()
+                .any(|known_real| fake.contains(known_real))
+    }
+
     /// Replaces all known real secrets in data with their fakes.
     pub fn obfuscate(&self, data: &str) -> String {
-        if self.real_to_fake.is_empty() {
-            return data.to_string();
+        String::from_utf8(replace_bytes(data.as_bytes(), self.real_to_fake.iter()))
+            .expect("UTF-8 secret replacement preserves UTF-8")
+    }
+
+    pub fn obfuscate_environment_value(&self, name: &str, value: &str) -> String {
+        if let Some(replacement) = self.environment_replacements.get(name) {
+            if replacement.real == value {
+                return replacement.fake.clone();
+            }
         }
-        let mut result = data.to_string();
-        let mut replacements: Vec<_> = self.real_to_fake.iter().collect();
-        replacements.sort_by(|(left, _), (right, _)| {
-            right.len().cmp(&left.len()).then_with(|| left.cmp(right))
-        });
-        for (real, fake) in replacements {
-            result = result.replace(real, fake);
-        }
-        result
+        self.obfuscate(value)
     }
 
     pub fn obfuscate_bytes(&self, data: &[u8]) -> Vec<u8> {
         replace_bytes(data, self.real_to_fake.iter())
     }
 
+    pub fn scrub_response_bytes(&self, data: &[u8]) -> Vec<u8> {
+        let mut replacements = self.real_to_fake.iter().collect::<Vec<_>>();
+        replacements.extend(
+            self.environment_replacements
+                .values()
+                .map(|replacement| (&replacement.real, &replacement.fake)),
+        );
+        replace_bytes(data, replacements)
+    }
+
     /// Replaces all known fake secrets in data with their real values.
     /// Used by the egress proxy.
     #[cfg(test)]
     pub fn deobfuscate(&self, data: &str) -> String {
-        if self.fake_to_real.is_empty() {
-            return data.to_string();
-        }
-        let mut result = data.to_string();
-        let mut replacements: Vec<_> = self.fake_to_real.iter().collect();
-        replacements.sort_by(|(left, _), (right, _)| {
-            right.len().cmp(&left.len()).then_with(|| left.cmp(right))
-        });
-        for (fake, real) in replacements {
-            result = result.replace(fake, real);
-        }
-        result
+        String::from_utf8(replace_bytes(data.as_bytes(), self.fake_to_real.iter()))
+            .expect("UTF-8 secret restoration preserves UTF-8")
     }
 
     /// Restores only secrets explicitly authorized for the normalized request
     /// authority. Unknown secrets have no destinations and are never restored.
     pub fn deobfuscate_for_authority(&self, data: &str, authority: &str) -> Result<String, String> {
-        let mut result = data.to_string();
-        for (fake, real) in self.authorized_replacements(authority)? {
-            result = result.replace(fake, real);
-        }
-        Ok(result)
+        let replacements = self.authorized_replacements(authority)?;
+        Ok(
+            String::from_utf8(replace_bytes(data.as_bytes(), replacements))
+                .expect("UTF-8 secret restoration preserves UTF-8"),
+        )
     }
 
     pub fn deobfuscate_bytes_for_authority(
@@ -232,27 +307,19 @@ where
     replacements.sort_by(|(left, _), (right, _)| {
         right.len().cmp(&left.len()).then_with(|| left.cmp(right))
     });
-    let mut result = data.to_vec();
-    for (from, to) in replacements {
-        result = replace_byte_sequence(&result, from.as_bytes(), to.as_bytes());
-    }
-    result
-}
-
-fn replace_byte_sequence(data: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    if from.is_empty() || from.len() > data.len() {
-        return data.to_vec();
-    }
     let mut output = Vec::with_capacity(data.len());
     let mut offset = 0;
     while offset < data.len() {
-        if data[offset..].starts_with(from) {
-            output.extend_from_slice(to);
+        let replacement = replacements
+            .iter()
+            .find(|(from, _)| data[offset..].starts_with(from.as_bytes()));
+        if let Some((from, to)) = replacement {
+            output.extend_from_slice(to.as_bytes());
             offset += from.len();
-        } else {
-            output.push(data[offset]);
-            offset += 1;
+            continue;
         }
+        output.push(data[offset]);
+        offset += 1;
     }
     output
 }
@@ -642,7 +709,7 @@ pub fn detect_in_env(name_patterns: &[String]) -> io::Result<Vec<(String, String
             continue;
         }
 
-        if is_secret_name_with_patterns(&name, name_patterns) && value.len() >= 8 {
+        if is_secret_name_with_patterns(&name, name_patterns) {
             found.push((name, value));
         }
     }
@@ -651,6 +718,7 @@ pub fn detect_in_env(name_patterns: &[String]) -> io::Result<Vec<(String, String
 }
 
 /// Detects secrets in a file (key=value or key:value format).
+#[cfg(test)]
 pub fn detect_in_file<P: AsRef<Path>>(
     path: P,
     name_patterns: &[String],
@@ -658,7 +726,17 @@ pub fn detect_in_file<P: AsRef<Path>>(
     min_char_classes: usize,
 ) -> io::Result<HashMap<String, String>> {
     let path = path.as_ref();
-    let mut file = open_regular_file(path)?;
+    let file = open_regular_file(path)?;
+    detect_in_open_file(path, file, name_patterns, min_length, min_char_classes)
+}
+
+fn detect_in_open_file(
+    path: &Path,
+    mut file: fs::File,
+    name_patterns: &[String],
+    min_length: usize,
+    min_char_classes: usize,
+) -> io::Result<HashMap<String, String>> {
     let mut content = String::new();
     file.read_to_string(&mut content)
         .map_err(|error| context("read secret file", path, error))?;
@@ -753,56 +831,6 @@ fn collect_json_secrets(
     }
 }
 
-/// Detects private keys in ~/.ssh directory.
-pub fn detect_in_ssh_dir<P: AsRef<Path>>(ssh_dir: P) -> io::Result<Vec<String>> {
-    let mut secrets = Vec::new();
-    let ssh_dir = ssh_dir.as_ref();
-    match fs::symlink_metadata(ssh_dir) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(secrets),
-        Err(error) => return Err(context("inspect SSH directory", ssh_dir, error)),
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "SSH path is not a symlink-free directory: {}",
-                    ssh_dir.display()
-                ),
-            ));
-        }
-        Ok(_) => {}
-    }
-
-    for entry in
-        fs::read_dir(ssh_dir).map_err(|error| context("read SSH directory", ssh_dir, error))?
-    {
-        let entry = entry.map_err(|error| context("read SSH directory entry", ssh_dir, error))?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| context("inspect SSH entry", &path, error))?;
-        if metadata.is_dir() {
-            continue;
-        }
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "SSH entry is not a symlink-free regular file: {}",
-                    path.display()
-                ),
-            ));
-        }
-        let mut content = String::new();
-        open_regular_file(&path)?
-            .read_to_string(&mut content)
-            .map_err(|error| context("read SSH entry", &path, error))?;
-        if content.contains("PRIVATE KEY") {
-            secrets.push(content);
-        }
-    }
-
-    Ok(secrets)
-}
-
 /// Scans the host for secrets in common locations and builds a complete mapping.
 pub fn scan_host(
     home_dir: &Path,
@@ -812,11 +840,13 @@ pub fn scan_host(
 ) -> io::Result<SecretMapping> {
     let mut mapping = SecretMapping::new();
     let destination_rules = DestinationRules::from_config(config)?;
+    let home_root = AnchoredRoot::open(home_dir)?;
+    let work_root = AnchoredRoot::open(work_dir)?;
 
     // Environment variables
     for (name, value) in detect_in_env(&config.secrets.name_patterns)? {
         let destinations = destination_rules.destinations(Some(&name), &value, None);
-        mapping.add_scoped(value, destinations)?;
+        mapping.add_environment_scoped(name, value, destinations)?;
     }
 
     // Config files: home dir configs (from staged_configs keys) + .env files in working directory
@@ -824,29 +854,34 @@ pub fn scan_host(
     for relative in config.paths.staged_configs.keys() {
         let path = resolve_relative_candidate(home_dir, relative)?;
         if allow_home_path(&path) {
-            all_files.push(path);
+            all_files.push((&home_root, path));
         }
     }
     for relative in &config.secrets.env_files {
-        all_files.push(resolve_relative_candidate(work_dir, relative)?);
+        all_files.push((&work_root, resolve_relative_candidate(work_dir, relative)?));
     }
 
-    for path in all_files {
-        let exists = match fs::symlink_metadata(&path) {
-            Ok(_) => true,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-            Err(error) => return Err(context("inspect secret candidate", &path, error)),
-        };
-        if !exists {
+    for (root, path) in all_files {
+        let Some(file) = root.open_regular(&path)? else {
             continue;
-        }
-        let secrets = detect_in_file(
+        };
+        let secrets = detect_in_open_file(
             &path,
+            file,
             &config.secrets.name_patterns,
             config.secrets.min_length,
             config.secrets.min_char_classes,
         )?;
         for (name, value) in secrets {
+            if value.len() < MIN_GLOBAL_SECRET_LENGTH {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "secret file value is too short for safe replacement: {}",
+                        path.display()
+                    ),
+                ));
+            }
             let destinations = destination_rules.destinations(Some(&name), &value, Some(&path));
             mapping.add_scoped(value, destinations)?;
         }
@@ -855,8 +890,14 @@ pub fn scan_host(
     // ~/.ssh private keys
     let ssh_dir = home_dir.join(".ssh");
     if allow_home_path(&ssh_dir) {
-        for value in detect_in_ssh_dir(&ssh_dir)? {
-            mapping.add(value)?;
+        for (path, mut file) in home_root.open_regular_directory(&ssh_dir)? {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|error| context("read SSH key", &path, error))?;
+            if !content.contains("PRIVATE KEY") {
+                continue;
+            }
+            mapping.add(content)?;
         }
     }
 
@@ -878,12 +919,19 @@ pub(crate) fn generate_fake(real: &str) -> io::Result<String> {
 }
 
 const MAX_FAKE_ATTEMPTS: usize = 32;
+const MIN_GLOBAL_SECRET_LENGTH: usize = 8;
 
 trait RandomSource {
     fn fill(&mut self, bytes: &mut [u8]) -> io::Result<()>;
 }
 
 struct OsRandom;
+
+fn generate_environment_fake(random: &mut dyn RandomSource) -> io::Result<String> {
+    let mut bytes = [0_u8; 16];
+    random.fill(&mut bytes)?;
+    Ok(format!("cdm_fake_{:032x}", u128::from_le_bytes(bytes)))
+}
 
 impl RandomSource for OsRandom {
     fn fill(&mut self, bytes: &mut [u8]) -> io::Result<()> {
@@ -921,6 +969,7 @@ fn generate_fake_with_random(real: &str, random: &mut dyn RandomSource) -> io::R
         .collect())
 }
 
+#[cfg(test)]
 fn open_regular_file(path: &Path) -> io::Result<fs::File> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;

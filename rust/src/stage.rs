@@ -5,9 +5,10 @@
 //! On macOS: seatbelt denies reads to originals; env vars redirect tools to copies.
 //! Real files are NEVER modified.
 
+use crate::anchored::AnchoredRoot;
 use crate::secrets::{self, SecretMapping};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ pub struct FileStage {
     name_patterns: Vec<String>,
     min_length: usize,
     min_char_classes: usize,
+    finished: bool,
     #[cfg(test)]
     owned_test_runtime: Option<PathBuf>,
 }
@@ -66,6 +68,7 @@ impl FileStage {
             name_patterns,
             min_length,
             min_char_classes,
+            finished: false,
             #[cfg(test)]
             owned_test_runtime: None,
         })
@@ -73,12 +76,26 @@ impl FileStage {
 
     /// Creates an obfuscated copy of a sensitive file in the temp dir.
     /// The original file is NEVER modified.
+    #[cfg(test)]
     pub fn stage_file<P: AsRef<Path>>(&mut self, path: P) -> io::Result<()> {
         let path = path.as_ref();
         let original = read_regular_file(path)?;
+        self.stage_content(path, &original)
+    }
+
+    pub fn stage_sensitive_file(&mut self, mut source: SensitiveFile) -> io::Result<()> {
+        let mut original = String::new();
+        source
+            .file
+            .read_to_string(&mut original)
+            .map_err(|error| with_path("read sensitive file", &source.path, error))?;
+        self.stage_content(&source.path, &original)
+    }
+
+    fn stage_content(&mut self, path: &Path, original: &str) -> io::Result<()> {
         let obfuscated = obfuscate_content_for_path(
             path,
-            &original,
+            original,
             &self.mapping,
             &self.name_patterns,
             self.min_length,
@@ -118,6 +135,27 @@ impl FileStage {
         &self.staged_files
     }
 
+    pub fn finish(&mut self) -> io::Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        match fs::remove_dir_all(&self.temp_dir) {
+            Ok(()) => {
+                self.finished = true;
+                Ok(())
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                self.finished = true;
+                Ok(())
+            }
+            Err(error) => Err(with_path(
+                "remove staged secret directory",
+                &self.temp_dir,
+                error,
+            )),
+        }
+    }
+
     /// Returns the staging temp directory path (used by VM mode for VirtioFS sharing).
     #[cfg_attr(not(feature = "vm"), allow(dead_code))]
     pub fn temp_dir_path(&self) -> &Path {
@@ -132,7 +170,7 @@ impl FileStage {
 
 impl Drop for FileStage {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.temp_dir);
+        let _ = self.finish();
         #[cfg(test)]
         if let Some(runtime_dir) = self.owned_test_runtime.take() {
             let _ = fs::remove_dir(runtime_dir);
@@ -154,14 +192,19 @@ pub enum SensitiveFileKind {
     SshKey,
 }
 
+#[derive(Debug)]
+pub struct SensitiveFile {
+    pub path: PathBuf,
+    file: fs::File,
+}
+
 /// Classifies a sensitive file path into its obfuscation strategy.
-pub fn classify_sensitive_file(path: &str, work_dir: &str, home_dir: &str) -> SensitiveFileKind {
-    if path.starts_with(work_dir) && is_env_file(Path::new(path)) {
+pub fn classify_sensitive_file(path: &Path, work_dir: &Path, home_dir: &Path) -> SensitiveFileKind {
+    if path.starts_with(work_dir) && is_env_file(path) {
         return SensitiveFileKind::EnvFile;
     }
 
-    let ssh_dir = format!("{}/.ssh/", home_dir);
-    if path.starts_with(&ssh_dir) {
+    if path.starts_with(home_dir.join(".ssh")) {
         return SensitiveFileKind::SshKey;
     }
 
@@ -205,7 +248,7 @@ pub fn parse_env_file_entries<P: AsRef<Path>>(path: P) -> io::Result<Vec<(String
 pub fn redirect_env_for_staged_file_with_config(
     original_path: &Path,
     staged_path: &Path,
-    home_dir: &str,
+    home_dir: &Path,
     staged_configs: &std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
     let rel = original_path
@@ -478,72 +521,45 @@ fn looks_like_base64_or_key_material(s: &str) -> bool {
 
 /// Finds sensitive files that need obfuscation.
 pub fn find_sensitive_files_with_config(
-    work_dir: &str,
-    home_dir: &str,
+    work_dir: &Path,
+    home_dir: &Path,
     env_files: &[String],
     staged_configs: &std::collections::HashMap<String, String>,
     allow_home_path: &dyn Fn(&Path) -> bool,
-) -> io::Result<Vec<String>> {
+) -> io::Result<Vec<SensitiveFile>> {
     let mut files = Vec::new();
+    let work_root = AnchoredRoot::open(work_dir)?;
+    let home_root = AnchoredRoot::open(home_dir)?;
 
     // .env files in working directory
     for pattern in env_files {
-        let path = secrets::resolve_relative_candidate(Path::new(work_dir), pattern)?;
-        if candidate_is_regular_file(&path)? {
-            files.push(path.to_string_lossy().into_owned());
+        let path = secrets::resolve_relative_candidate(work_dir, pattern)?;
+        if let Some(file) = work_root.open_regular(&path)? {
+            files.push(SensitiveFile { path, file });
         }
     }
 
     // Home directory config files (keys from staged_configs map)
     for rel in staged_configs.keys() {
-        let path = secrets::resolve_relative_candidate(Path::new(home_dir), rel)?;
-        if allow_home_path(&path) && candidate_is_regular_file(&path)? {
-            files.push(path.to_string_lossy().into_owned());
+        let path = secrets::resolve_relative_candidate(home_dir, rel)?;
+        if allow_home_path(&path) {
+            if let Some(file) = home_root.open_regular(&path)? {
+                files.push(SensitiveFile { path, file });
+            }
         }
     }
 
     // SSH private keys
-    let ssh_dir = format!("{}/.ssh", home_dir);
-    if allow_home_path(Path::new(&ssh_dir)) {
-        let ssh_path = Path::new(&ssh_dir);
-        match fs::symlink_metadata(ssh_path) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(with_path("inspect SSH directory", ssh_path, error)),
-            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "SSH path is not a symlink-free directory: {}",
-                        ssh_path.display()
-                    ),
-                ));
-            }
-            Ok(_) => {
-                for entry in fs::read_dir(ssh_path)
-                    .map_err(|error| with_path("read SSH directory", ssh_path, error))?
-                {
-                    let entry = entry
-                        .map_err(|error| with_path("read SSH directory entry", ssh_path, error))?;
-                    let path = entry.path();
-                    let metadata = fs::symlink_metadata(&path)
-                        .map_err(|error| with_path("inspect SSH entry", &path, error))?;
-                    if metadata.is_dir() {
-                        continue;
-                    }
-                    if metadata.file_type().is_symlink() || !metadata.is_file() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "SSH entry is not a symlink-free regular file: {}",
-                                path.display()
-                            ),
-                        ));
-                    }
-                    let content = read_regular_file(&path)?;
-                    if content.contains("PRIVATE KEY") {
-                        files.push(path.to_string_lossy().to_string());
-                    }
-                }
+    let ssh_path = home_dir.join(".ssh");
+    if allow_home_path(&ssh_path) {
+        for (path, mut file) in home_root.open_regular_directory(&ssh_path)? {
+            let mut content = String::new();
+            file.read_to_string(&mut content)
+                .map_err(|error| with_path("read SSH entry", &path, error))?;
+            if content.contains("PRIVATE KEY") {
+                file.seek(std::io::SeekFrom::Start(0))
+                    .map_err(|error| with_path("rewind SSH entry", &path, error))?;
+                files.push(SensitiveFile { path, file });
             }
         }
     }
@@ -629,23 +645,6 @@ fn staged_relative_path(path: &Path) -> io::Result<PathBuf> {
         ));
     }
     Ok(relative)
-}
-
-fn candidate_is_regular_file(path: &Path) -> io::Result<bool> {
-    match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(with_path("inspect sensitive file", path, error)),
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "sensitive path is not a symlink-free regular file: {}",
-                    path.display()
-                ),
-            ))
-        }
-        Ok(_) => Ok(true),
-    }
 }
 
 fn read_regular_file(path: &Path) -> io::Result<String> {

@@ -39,6 +39,17 @@ fn resolves_tilde_and_workspace_relative_paths() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn tilde_resolution_preserves_non_utf8_path_bytes_for_validation() {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let path = PathBuf::from(std::ffi::OsString::from_vec(b"~/opaque-\xff".to_vec()));
+    let resolved = resolve_path(&path, Path::new("/work"), Path::new("/home/user"));
+
+    assert_eq!(resolved.as_os_str().as_bytes(), b"/home/user/opaque-\xff");
+}
+
 #[test]
 fn resolves_config_from_home_and_cli_from_workspace() {
     let (work, home) = fixture();
@@ -59,6 +70,51 @@ fn resolves_config_from_home_and_cli_from_workspace() {
         .allow_ro
         .contains(&config_dir.canonicalize().unwrap()));
     assert!(resolved.allow_rw.contains(&cli_dir.canonicalize().unwrap()));
+    let _ = std::fs::remove_dir_all(work.parent().unwrap());
+}
+
+#[test]
+fn resolved_grant_kind_is_frozen_before_adapter_translation() {
+    let (work, home) = fixture();
+    let grant = work.join("grant");
+    let moved = work.join("moved-grant");
+    std::fs::create_dir(&grant).unwrap();
+    let mut policy = AccessPolicy::new(&PathsConfig::default());
+    policy.add_allow_ro(grant.clone());
+    let resolved = policy
+        .resolve(&work, &home, &[], &[std::ffi::OsString::from("true")])
+        .unwrap();
+    let grant = grant.canonicalize().unwrap();
+
+    std::fs::rename(&grant, &moved).unwrap();
+    std::fs::create_dir(&grant).unwrap();
+
+    assert_eq!(resolved.kind(&grant), Some(DeniedPathKind::Directory));
+    assert_eq!(
+        resolved.verify_identities().unwrap_err().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    let _ = std::fs::remove_dir_all(work.parent().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn rejects_non_utf8_filesystem_policy_paths_before_adapter_translation() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let (work, home) = fixture();
+    let opaque = work.join(std::ffi::OsString::from_vec(b"opaque-\xff".to_vec()));
+    let mut policy = AccessPolicy::new(&PathsConfig::default());
+    policy.add_runtime_deny_write(opaque);
+
+    let error = policy
+        .resolve(&work, &home, &[], &[std::ffi::OsString::from("true")])
+        .unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert!(error
+        .to_string()
+        .contains("filesystem policy paths must be valid UTF-8"));
     let _ = std::fs::remove_dir_all(work.parent().unwrap());
 }
 

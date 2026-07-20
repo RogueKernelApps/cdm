@@ -183,6 +183,33 @@ fn isolated_profile_uses_read_allowlist() {
 }
 
 #[test]
+fn profile_uses_frozen_grant_kind_and_identity() {
+    use std::os::unix::fs::symlink;
+
+    let fix = TestFixture::new("profile-frozen-grant");
+    let grant = fix.work_dir.join("grant");
+    let moved = fix.work_dir.join("moved-grant");
+    let outside = fix.home_dir.join("outside");
+    fs::create_dir(&grant).unwrap();
+    fs::create_dir(&outside).unwrap();
+    let mut cfg = fix.sandbox_config();
+    cfg.access.host = crate::access::HostAccess::Isolated;
+    cfg.access.add_allow_ro(grant.clone());
+    cfg.freeze_access().unwrap();
+    let frozen = grant.canonicalize().unwrap();
+
+    fs::rename(&grant, &moved).unwrap();
+    symlink(&outside, &grant).unwrap();
+    let profile = generate_sbpl_profile(&cfg).unwrap();
+
+    assert!(profile.contains(&format!(
+        "(allow file-read* (subpath \"{}\"))",
+        frozen.display()
+    )));
+    assert!(!profile.contains(&outside.display().to_string()));
+}
+
+#[test]
 fn secure_profile_is_deny_first_and_limits_mach_ipc() {
     let fix = TestFixture::new("profile-secure");
     let mut cfg = fix.sandbox_config();

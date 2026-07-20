@@ -223,3 +223,34 @@ fn test_build_env_drops_inherited_proxy_configuration_when_disabled() {
         assert!(!env.contains_key(key), "{key} must not be inherited");
     }
 }
+
+#[test]
+fn adapter_dispatch_rejects_same_kind_workspace_replacement() {
+    let root = std::env::temp_dir().join(format!(
+        "cdm-frozen-workspace-dispatch-{}",
+        std::process::id()
+    ));
+    let workspace = root.join("workspace");
+    let moved = root.join("moved-workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut cfg = SandboxConfig::new(Arc::new(CdmConfig::default())).unwrap();
+    let runtime = cfg.runtime_dir.clone();
+    cfg.work_dir = workspace.clone();
+    cfg.command = vec!["true".into()];
+    cfg.freeze_access().unwrap();
+    std::fs::rename(&workspace, &moved).unwrap();
+    std::fs::create_dir(&workspace).unwrap();
+
+    let result = run(cfg).unwrap();
+    let error = match result.child {
+        Ok(_) => panic!("replacement workspace reached the adapter"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error
+        .to_string()
+        .contains("filesystem path identity changed"));
+    let _ = std::fs::remove_dir_all(root);
+    let _ = std::fs::remove_dir_all(runtime);
+}

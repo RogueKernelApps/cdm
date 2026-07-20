@@ -313,6 +313,7 @@ pub enum LaunchStage {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CleanupOutcome {
     Pending,
+    Incomplete,
     Succeeded,
     Failed { stage: CleanupStage },
 }
@@ -323,6 +324,7 @@ pub enum CleanupStage {
     Monitor,
     Proxy,
     RuntimeDirectory,
+    StagedFiles,
     Transport,
     Worktree,
 }

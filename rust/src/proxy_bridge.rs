@@ -5,15 +5,20 @@
 //! SCM_RIGHTS; the trusted host broker connects each descriptor to CDM's
 //! existing loopback proxy. No routable interface enters the namespace.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(target_os = "linux")]
+use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::io::Read;
 
 pub const BRIDGE_SOCKET_NAME: &str = "bridge.sock";
 const BRIDGE_RECORD: u8 = 0xc1;
@@ -93,36 +98,34 @@ impl ProxyBridge {
     pub fn stop(&mut self) -> io::Result<()> {
         self.stop.store(true, Ordering::Release);
         let _ = UnixStream::connect(&self.socket_path);
-        let broker_result = self
-            .broker
-            .take()
-            .map(|thread| {
-                thread
-                    .join()
-                    .map_err(|_| io::Error::other("proxy bridge broker panicked"))?
-            })
-            .unwrap_or(Ok(()));
-        let forwarders = std::mem::take(
-            &mut *self
-                .forwarders
-                .lock()
-                .map_err(|_| io::Error::other("proxy bridge lock poisoned"))?,
-        );
-        let mut forwarding_result = Ok(());
+        let mut failure = None;
+        if let Some(thread) = self.broker.take() {
+            let result = thread
+                .join()
+                .map_err(|_| io::Error::other("proxy bridge broker panicked"))
+                .and_then(|result| result);
+            record_cleanup_failure(&mut failure, result);
+        }
+        let forwarders = match self.forwarders.lock() {
+            Ok(mut forwarders) => std::mem::take(&mut *forwarders),
+            Err(_) => {
+                record_cleanup_failure(
+                    &mut failure,
+                    Err(io::Error::other("proxy bridge lock poisoned")),
+                );
+                Vec::new()
+            }
+        };
         for forwarder in forwarders {
             let result = forwarder
                 .join()
-                .map_err(|_| io::Error::other("proxy bridge forwarder panicked"))?;
-            if forwarding_result.is_ok() {
-                forwarding_result = result;
-            }
+                .map_err(|_| io::Error::other("proxy bridge forwarder panicked"))
+                .and_then(|result| result);
+            record_cleanup_failure(&mut failure, result);
         }
-        let socket_cleanup = remove_if_present(&self.socket_path);
-        let root_cleanup = std::fs::remove_dir(&self.root);
-        broker_result
-            .and(forwarding_result)
-            .and(socket_cleanup)
-            .and(root_cleanup)
+        record_cleanup_failure(&mut failure, remove_if_present(&self.socket_path));
+        record_cleanup_failure(&mut failure, remove_dir_if_present(&self.root));
+        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -439,6 +442,27 @@ fn remove_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+fn remove_dir_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::remove_dir(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn record_cleanup_failure(failure: &mut Option<io::Error>, result: io::Result<()>) {
+    if let Err(error) = result {
+        if let Some(first) = failure.take() {
+            *failure = Some(io::Error::new(
+                first.kind(),
+                format!("{first}; additional cleanup failure: {error}"),
+            ));
+        } else {
+            *failure = Some(error);
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn run_namespace_helper(
     bridge_path: &Path,
@@ -574,18 +598,18 @@ fn unix_socket_filter() -> Vec<libc::sock_filter> {
     const AUDIT_ARCH: u32 = 0xc000_00b7;
     let mut filter = vec![
         stmt(
-            libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
+            (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
             offset_of!(libc::seccomp_data, arch) as u32,
         ),
         jump(
-            libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+            (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
             AUDIT_ARCH,
             1,
             0,
         ),
-        stmt(libc::BPF_RET | libc::BPF_K, KILL),
+        stmt((libc::BPF_RET | libc::BPF_K) as u16, KILL),
         stmt(
-            libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
+            (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
             offset_of!(libc::seccomp_data, nr) as u32,
         ),
     ];
@@ -597,35 +621,38 @@ fn unix_socket_filter() -> Vec<libc::sock_filter> {
         libc::SYS_bpf,
     ] {
         filter.push(jump(
-            libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+            (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
             syscall as u32,
             0,
             1,
         ));
         filter.push(stmt(
-            libc::BPF_RET | libc::BPF_K,
+            (libc::BPF_RET | libc::BPF_K) as u16,
             ERRNO | libc::EACCES as u32,
         ));
     }
     filter.extend([
         jump(
-            libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+            (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
             libc::SYS_socket as u32,
             0,
             3,
         ),
         stmt(
-            libc::BPF_LD | libc::BPF_W | libc::BPF_ABS,
+            (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
             offset_of!(libc::seccomp_data, args) as u32,
         ),
         jump(
-            libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K,
+            (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
             libc::AF_UNIX as u32,
             0,
             1,
         ),
-        stmt(libc::BPF_RET | libc::BPF_K, ERRNO | libc::EACCES as u32),
-        stmt(libc::BPF_RET | libc::BPF_K, ALLOW),
+        stmt(
+            (libc::BPF_RET | libc::BPF_K) as u16,
+            ERRNO | libc::EACCES as u32,
+        ),
+        stmt((libc::BPF_RET | libc::BPF_K) as u16, ALLOW),
     ]);
     filter
 }

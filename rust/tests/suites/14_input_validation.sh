@@ -75,4 +75,38 @@ RC=$?
 check_eq "malformed project config exits with usage status" "$RC" "2"
 check "malformed project config identifies its path" "$OUT" ".cdm/config.json"
 
+NON_UTF8_MARKER="$CONFIG_ROOT/non-utf8-child-marker"
+OUT=$(python3 - "$CDM" "$NON_UTF8_MARKER" <<'PY'
+import os
+import subprocess
+import sys
+
+environment = os.environb.copy()
+environment[b"CDM_CACHE_DIR"] = b"/tmp/cdm-policy-\xff"
+result = subprocess.run(
+    [
+        os.fsencode(sys.argv[1]),
+        b"--no-network",
+        b"--",
+        b"sh",
+        b"-c",
+        b'printf child-ran > "$1"',
+        b"sh",
+        os.fsencode(sys.argv[2]),
+    ],
+    env=environment,
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.PIPE,
+)
+sys.stdout.buffer.write(result.stderr)
+raise SystemExit(result.returncode)
+PY
+)
+RC=$?
+check_eq "non-UTF-8 policy path exits with usage status" "$RC" "2"
+check "non-UTF-8 policy path fails closed" "$OUT" \
+    "filesystem policy paths must be valid UTF-8"
+check_eq "non-UTF-8 policy path never launches the child" \
+    "$(test ! -e "$NON_UTF8_MARKER"; echo $?)" "0"
+
 remove_test_path "$CONFIG_ROOT"

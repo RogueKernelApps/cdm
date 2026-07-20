@@ -6,6 +6,7 @@ use std::env;
 use std::io;
 
 mod access;
+mod anchored;
 mod app;
 mod cli;
 mod config;

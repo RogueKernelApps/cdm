@@ -10,6 +10,7 @@ fn denied_nodes() -> DeniedNodes {
         denied_file: "/fixtures/denied/file".into(),
         denied_dir: "/fixtures/denied/dir".into(),
         read_only_file: "/fixtures/denied/read-only".into(),
+        finished: false,
     }
 }
 
@@ -21,6 +22,8 @@ fn rule(
     crate::access::ResolvedDenyRule {
         lexical: path.into(),
         canonical: None,
+        lexical_exists: kind != crate::access::DeniedPathKind::Missing,
+        exists: kind != crate::access::DeniedPathKind::Missing,
         kind,
         origin: crate::access::DenyOrigin::Configured,
         missing_parents: missing_parents

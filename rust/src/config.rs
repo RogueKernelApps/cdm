@@ -459,10 +459,10 @@ pub struct TrustReceipt {
 }
 
 fn config_path() -> PathBuf {
-    if let Ok(path) = std::env::var("CDM_CONFIG_PATH") {
+    if let Some(path) = std::env::var_os("CDM_CONFIG_PATH") {
         return PathBuf::from(path);
     }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let home = std::env::var_os("HOME").unwrap_or_else(|| "/root".into());
     PathBuf::from(home).join(".cdm").join("config.json")
 }
 
@@ -503,6 +503,12 @@ fn load_from_paths(
     selected_presets: &[String],
     trust_path: &std::path::Path,
 ) -> io::Result<LoadedConfig> {
+    for path in [global_path, home, trust_path, project.root.as_path()] {
+        require_utf8_policy_path(path)?;
+    }
+    if let Some(path) = project.config_path.as_deref() {
+        require_utf8_policy_path(path)?;
+    }
     let mut value = CdmConfig::default();
     let mut paths = configured_defaults(&value.paths, home);
     protect_policy_file(&mut paths, global_path);
@@ -585,7 +591,9 @@ fn trust_project_in(
     }
     let digest = sha256_hex(&bytes);
     let mut store = read_trust_store(trust_path)?;
-    store.projects.insert(path_key(config_path), digest.clone());
+    store
+        .projects
+        .insert(path_key(config_path)?, digest.clone());
     write_trust_store(trust_path, &store)?;
     Ok(TrustReceipt {
         config_path: config_path.to_path_buf(),
@@ -606,7 +614,7 @@ fn load_trusted_project_layer(
     })?;
     let digest = sha256_hex(&bytes);
     let store = read_trust_store(trust_path)?;
-    if store.projects.get(&path_key(project_path)) != Some(&digest) {
+    if store.projects.get(&path_key(project_path)?) != Some(&digest) {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!(
@@ -640,8 +648,11 @@ fn absolute_path(path: &std::path::Path) -> io::Result<PathBuf> {
 }
 
 fn protect_policy_file(paths: &mut ConfiguredPaths, path: &std::path::Path) {
+    let value = path
+        .to_str()
+        .expect("policy paths are validated before protection");
     paths.deny_write.push(ConfiguredPath {
-        value: path.to_string_lossy().into_owned(),
+        value: value.to_string(),
         relative_to: PathBuf::new(),
     });
 }
@@ -755,8 +766,19 @@ fn validate_custom_config_parent(
     ))
 }
 
-fn path_key(path: &std::path::Path) -> String {
-    path.to_string_lossy().into_owned()
+fn path_key(path: &std::path::Path) -> io::Result<String> {
+    require_utf8_policy_path(path)?;
+    Ok(path.to_str().expect("validated UTF-8 path").to_owned())
+}
+
+fn require_utf8_policy_path(path: &std::path::Path) -> io::Result<()> {
+    if path.to_str().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "filesystem policy paths must be valid UTF-8",
+        ));
+    }
+    Ok(())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

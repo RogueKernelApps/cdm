@@ -350,7 +350,7 @@ async fn rewrite_response(
     }
     for value in parts.headers.values_mut() {
         let original = value.as_bytes();
-        let obfuscated = mapping.obfuscate_bytes(original);
+        let obfuscated = mapping.scrub_response_bytes(original);
         if obfuscated != original {
             match hudsucker::hyper::header::HeaderValue::from_bytes(&obfuscated) {
                 Ok(new_value) => {
@@ -378,7 +378,7 @@ async fn rewrite_response(
             );
         }
     };
-    let obfuscated = mapping.obfuscate_bytes(&body_bytes);
+    let obfuscated = mapping.scrub_response_bytes(&body_bytes);
     counters
         .bytes_from_upstream
         .fetch_add(body_bytes.len() as u64, Ordering::Relaxed);
@@ -665,12 +665,20 @@ impl ProxySession {
         let result = if let Some(thread) = self.thread.take() {
             thread
                 .join()
-                .map_err(|_| io::Error::other("proxy thread panicked"))?
+                .map_err(|_| io::Error::other("proxy thread panicked"))
+                .and_then(|result| result)
         } else {
             Ok(())
         };
         let cleanup = std::fs::remove_dir_all(&self.artifact_dir);
-        result.and(cleanup)
+        match (result, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(thread), Err(cleanup)) => Err(io::Error::new(
+                thread.kind(),
+                format!("{thread}; proxy artifact cleanup also failed: {cleanup}"),
+            )),
+        }
     }
 }
 

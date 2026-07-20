@@ -19,19 +19,15 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
     // Build bwrap arguments — all owned Strings for uniform handling
     let mut args: Vec<String> = Vec::new();
     let access = cfg.resolved_access()?;
-    let denied_nodes = DeniedNodes::create()?;
+    let mut denied_nodes = DeniedNodes::create(&cfg.runtime_dir)?;
     let seccomp = if cfg.network.is_proxied() {
         None
     } else {
         Some(crate::proxy_bridge::SeccompProgram::deny_host_socket_deputies()?)
     };
     let mut bridge = if cfg.network.is_proxied() {
-        let runtime_root = cfg
-            .runtime_dir
-            .parent()
-            .ok_or_else(|| io::Error::other("CDM runtime directory has no private parent"))?;
         Some(crate::proxy_bridge::ProxyBridge::start(
-            runtime_root,
+            &cfg.runtime_dir,
             cfg.proxy_port,
         )?)
     } else {
@@ -41,9 +37,7 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
     if access.host == crate::access::HostAccess::Isolated {
         args.extend(["--tmpfs".to_string(), "/".to_string()]);
         for path in &access.runtime_ro {
-            if path.exists() {
-                add_bind(&mut args, "--ro-bind", path);
-            }
+            add_bind(&mut args, "--ro-bind", path);
         }
     } else {
         add_bind(&mut args, "--ro-bind", Path::new("/"));
@@ -190,8 +184,25 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
     }
 
     let child = crate::process::run(&mut cmd);
-    let cleanup = bridge.as_mut().map_or(Ok(()), |bridge| bridge.stop());
-    Ok(SandboxRun { child, cleanup })
+    let bridge_cleanup = bridge.as_mut().map_or(Ok(()), |bridge| bridge.stop());
+    let denied_cleanup = denied_nodes.finish();
+    let cleanup = combine_cleanup(bridge_cleanup, denied_cleanup);
+    Ok(SandboxRun {
+        child,
+        cleanup,
+        staged_cleanup: Ok(()),
+    })
+}
+
+fn combine_cleanup(first: io::Result<()>, second: io::Result<()>) -> io::Result<()> {
+    match (first, second) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(first), Err(second)) => Err(io::Error::new(
+            first.kind(),
+            format!("{first}; additional cleanup failure: {second}"),
+        )),
+    }
 }
 
 fn append_hard_denials(
@@ -252,13 +263,13 @@ fn append_hard_denials(
         for path in rule.paths().filter(|path| path_is_active(path)) {
             match rule.kind {
                 crate::access::DeniedPathKind::Directory => {
-                    add_bind(&mut args, "--ro-bind", path);
+                    add_bind(args, "--ro-bind", path);
                 }
                 crate::access::DeniedPathKind::File | crate::access::DeniedPathKind::Other => {
-                    add_bind(&mut args, "--ro-bind", path);
+                    add_bind(args, "--ro-bind", path);
                 }
                 crate::access::DeniedPathKind::Missing => {
-                    add_bind_from(&mut args, "--ro-bind", &denied_nodes.read_only_file, path);
+                    add_bind_from(args, "--ro-bind", &denied_nodes.read_only_file, path);
                 }
             }
         }
@@ -270,7 +281,7 @@ fn append_hard_denials(
             &denied_nodes.denied_file
         };
         for path in rule.paths().filter(|path| path_is_active(path)) {
-            add_bind_from(&mut args, "--ro-bind", source, path);
+            add_bind_from(args, "--ro-bind", source, path);
         }
     }
 }
@@ -304,11 +315,12 @@ struct DeniedNodes {
     denied_file: std::path::PathBuf,
     denied_dir: std::path::PathBuf,
     read_only_file: std::path::PathBuf,
+    finished: bool,
 }
 
 impl DeniedNodes {
-    fn create() -> io::Result<Self> {
-        let root = std::env::temp_dir().join(format!(
+    fn create(runtime_dir: &Path) -> io::Result<Self> {
+        let root = runtime_dir.join(format!(
             "cdm-denied-nodes-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -317,29 +329,50 @@ impl DeniedNodes {
                 .as_nanos()
         ));
         fs::create_dir(&root)?;
-        fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
         let denied_file = root.join("denied-file");
         let denied_dir = root.join("denied-dir");
         let read_only_file = root.join("read-only-file");
-        fs::write(&denied_file, [])?;
-        fs::set_permissions(&denied_file, fs::Permissions::from_mode(0o000))?;
-        fs::create_dir(&denied_dir)?;
-        fs::set_permissions(&denied_dir, fs::Permissions::from_mode(0o000))?;
-        fs::write(&read_only_file, [])?;
-        fs::set_permissions(&read_only_file, fs::Permissions::from_mode(0o444))?;
-        Ok(Self {
+        let nodes = Self {
             root,
             denied_file,
             denied_dir,
             read_only_file,
-        })
+            finished: false,
+        };
+        fs::set_permissions(&nodes.root, fs::Permissions::from_mode(0o700))?;
+        fs::write(&nodes.denied_file, [])?;
+        fs::set_permissions(&nodes.denied_file, fs::Permissions::from_mode(0o000))?;
+        fs::create_dir(&nodes.denied_dir)?;
+        fs::set_permissions(&nodes.denied_dir, fs::Permissions::from_mode(0o000))?;
+        fs::write(&nodes.read_only_file, [])?;
+        fs::set_permissions(&nodes.read_only_file, fs::Permissions::from_mode(0o444))?;
+        Ok(nodes)
+    }
+
+    fn finish(&mut self) -> io::Result<()> {
+        if self.finished {
+            return Ok(());
+        }
+        let permissions =
+            match fs::set_permissions(&self.denied_dir, fs::Permissions::from_mode(0o700)) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            };
+        let removal = match fs::remove_dir_all(&self.root) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+        combine_cleanup(permissions, removal)?;
+        self.finished = true;
+        Ok(())
     }
 }
 
 impl Drop for DeniedNodes {
     fn drop(&mut self) {
-        let _ = fs::set_permissions(&self.denied_dir, fs::Permissions::from_mode(0o700));
-        let _ = fs::remove_dir_all(&self.root);
+        let _ = self.finish();
     }
 }
 

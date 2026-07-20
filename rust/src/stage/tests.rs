@@ -379,8 +379,8 @@ fn missing_optional_candidates_are_ignored() {
     fs::create_dir_all(&home).unwrap();
 
     let files = find_sensitive_files_with_config(
-        &work.to_string_lossy(),
-        &home.to_string_lossy(),
+        &work,
+        &home,
         &[".env".into()],
         &std::collections::HashMap::from([(
             ".aws/credentials".into(),
@@ -408,8 +408,8 @@ fn symlinked_sensitive_candidates_are_rejected_without_reading_targets() {
     symlink(&target, work.join(".env")).unwrap();
 
     let error = find_sensitive_files_with_config(
-        &work.to_string_lossy(),
-        &home.to_string_lossy(),
+        &work,
+        &home,
         &[".env".into()],
         &std::collections::HashMap::new(),
         &|_| true,
@@ -419,25 +419,57 @@ fn symlinked_sensitive_candidates_are_rejected_without_reading_targets() {
     assert!(!error.to_string().contains(secret));
 }
 
+#[cfg(unix)]
 #[test]
-fn test_classify_sensitive_file() {
-    let work = "/home/user/project";
-    let home = "/home/user";
+fn sensitive_candidates_beneath_symlinked_ancestors_are_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let stage = FileStage::new(SecretMapping::new()).unwrap();
+    let work = stage.temp_dir().join("work");
+    let home = stage.temp_dir().join("home");
+    let outside = stage.temp_dir().join("outside");
+    fs::create_dir_all(&work).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let secret = "outside-stage-secret-must-not-appear";
+    fs::write(outside.join("candidate.env"), format!("API_KEY={secret}\n")).unwrap();
+    symlink(&outside, work.join("linked")).unwrap();
+
+    let error = find_sensitive_files_with_config(
+        &work,
+        &home,
+        &["linked/candidate.env".into()],
+        &std::collections::HashMap::new(),
+        &|_| true,
+    )
+    .unwrap_err();
 
     assert!(matches!(
-        classify_sensitive_file("/home/user/project/.env", work, home),
+        error.kind(),
+        io::ErrorKind::NotADirectory | io::ErrorKind::InvalidData
+    ));
+    assert!(!error.to_string().contains(secret));
+}
+
+#[test]
+fn test_classify_sensitive_file() {
+    let work = Path::new("/home/user/project");
+    let home = Path::new("/home/user");
+
+    assert!(matches!(
+        classify_sensitive_file(Path::new("/home/user/project/.env"), work, home),
         SensitiveFileKind::EnvFile
     ));
     assert!(matches!(
-        classify_sensitive_file("/home/user/.aws/credentials", work, home),
+        classify_sensitive_file(Path::new("/home/user/.aws/credentials"), work, home),
         SensitiveFileKind::HomeConfig
     ));
     assert!(matches!(
-        classify_sensitive_file("/home/user/.ssh/id_rsa", work, home),
+        classify_sensitive_file(Path::new("/home/user/.ssh/id_rsa"), work, home),
         SensitiveFileKind::SshKey
     ));
     assert!(matches!(
-        classify_sensitive_file("/home/user/.docker/config.json", work, home),
+        classify_sensitive_file(Path::new("/home/user/.docker/config.json"), work, home),
         SensitiveFileKind::HomeConfig
     ));
 }
@@ -450,7 +482,7 @@ fn test_redirect_env_for_staged_file_with_config() {
     let redirects = redirect_env_for_staged_file_with_config(
         Path::new("/home/user/.aws/credentials"),
         Path::new("/tmp/cdm-stage/home/user/.aws/credentials"),
-        home,
+        Path::new(home),
         &configs,
     );
     assert_eq!(redirects.len(), 1);
@@ -459,7 +491,7 @@ fn test_redirect_env_for_staged_file_with_config() {
     let redirects = redirect_env_for_staged_file_with_config(
         Path::new("/home/user/.docker/config.json"),
         Path::new("/tmp/cdm-stage/home/user/.docker/config.json"),
-        home,
+        Path::new(home),
         &configs,
     );
     assert_eq!(redirects.len(), 1);
@@ -470,7 +502,7 @@ fn test_redirect_env_for_staged_file_with_config() {
     let redirects = redirect_env_for_staged_file_with_config(
         Path::new("/home/user/.ssh/id_rsa"),
         Path::new("/tmp/cdm-stage/home/user/.ssh/id_rsa"),
-        home,
+        Path::new(home),
         &configs,
     );
     assert!(redirects.is_empty());

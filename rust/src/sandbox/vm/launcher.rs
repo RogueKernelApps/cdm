@@ -109,7 +109,11 @@ pub(super) fn launch(
     #[cfg(not(target_os = "linux"))]
     let bridge_cleanup = Ok(());
     let cleanup = plan_cleanup.and(bridge_cleanup);
-    Ok(super::super::SandboxRun { child, cleanup })
+    Ok(super::super::SandboxRun {
+        child,
+        cleanup,
+        staged_cleanup: Ok(()),
+    })
 }
 
 fn remove_consumed_plan(path: &Path) -> io::Result<()> {
@@ -197,9 +201,9 @@ pub(super) fn launcher_profile(
 
     for share in shares {
         let path = Path::new(&share.host_path);
-        push_launcher_path(&mut profile, "allow file-read*", "subpath", path);
+        push_launcher_policy_path(&mut profile, "allow file-read*", "subpath", path);
         if !share.read_only {
-            push_launcher_path(&mut profile, "allow file-write*", "subpath", path);
+            push_launcher_policy_path(&mut profile, "allow file-write*", "subpath", path);
         }
     }
 
@@ -315,6 +319,11 @@ fn push_launcher_path(profile: &mut String, operation: &str, filter: &str, path:
 
 #[cfg(target_os = "macos")]
 fn push_launcher_denial(profile: &mut String, operation: &str, filter: &str, path: &Path) {
+    push_launcher_policy_path(profile, operation, filter, path);
+}
+
+#[cfg(target_os = "macos")]
+fn push_launcher_policy_path(profile: &mut String, operation: &str, filter: &str, path: &Path) {
     let escaped = path
         .to_string_lossy()
         .replace('\\', "\\\\")

@@ -72,7 +72,7 @@ pub(super) fn write(
         guest_mount(
             GuestMountKind::Virtiofs,
             Some(TAG_WORKDIR),
-            &cfg.work_dir,
+            &access.work_dir,
             access.workspace == crate::access::WorkspaceAccess::ReadOnly,
         ),
     ];
@@ -103,7 +103,7 @@ pub(super) fn write(
             {
                 continue;
             }
-            if !path.is_dir() {
+            if access.kind(path) != Some(crate::access::DeniedPathKind::Directory) {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     format!("VM grants must name directories: {}", path.display()),
@@ -198,7 +198,7 @@ pub(super) fn write(
             .map(|argument| argument.as_bytes().to_vec())
             .collect(),
         fake_env: env,
-        cwd: &cfg.work_dir,
+        cwd: &access.work_dir,
         uid: guest_uid,
         gid: guest_gid,
         mounts,

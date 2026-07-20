@@ -47,7 +47,7 @@ pub fn run_darwin(cfg: SandboxConfig) -> io::Result<crate::process::ChildStatus>
         cmd.env(key, value);
     }
 
-    cmd.current_dir(&cfg.work_dir);
+    cmd.current_dir(&cfg.resolved_access()?.work_dir);
 
     if cfg.debug {
         eprintln!(
@@ -107,7 +107,12 @@ fn generate_sbpl_profile(cfg: &SandboxConfig) -> io::Result<String> {
         );
     }
     for path in &access.allow_rw {
-        push_sbpl_path_variants(&mut profile, "allow file-write*", path_filter(path), path);
+        push_sbpl_path_variants(
+            &mut profile,
+            "allow file-write*",
+            path_filter(access, path),
+            path,
+        );
     }
 
     profile.push('\n');
@@ -121,10 +126,20 @@ fn generate_sbpl_profile(cfg: &SandboxConfig) -> io::Result<String> {
             .chain(std::iter::once(&access.work_dir))
             .chain(access.allow_ro.iter())
             .chain(access.allow_rw.iter())
-            .chain(std::iter::once(&cfg.runtime_dir))
         {
-            push_sbpl_path_variants(&mut profile, "allow file-read*", path_filter(path), path);
+            push_sbpl_path_variants(
+                &mut profile,
+                "allow file-read*",
+                path_filter(access, path),
+                path,
+            );
         }
+        push_sbpl_path_variants(
+            &mut profile,
+            "allow file-read*",
+            "subpath",
+            &cfg.runtime_dir,
+        );
         profile.push('\n');
     } else if deny_first {
         profile.push_str("(allow file-read*)\n\n");
@@ -214,8 +229,11 @@ pub(super) const SECURE_RUNTIME_BASELINE: &str = r#"; Process lifecycle
 
 "#;
 
-fn path_filter(path: &std::path::Path) -> &'static str {
-    if path.is_dir() {
+fn path_filter(
+    access: &crate::access::ResolvedAccessPolicy,
+    path: &std::path::Path,
+) -> &'static str {
+    if access.kind(path) == Some(crate::access::DeniedPathKind::Directory) {
         "subpath"
     } else {
         "literal"
@@ -236,9 +254,8 @@ fn push_sbpl_path_variants(
     filter: &str,
     path: &std::path::Path,
 ) {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    push_sbpl_path(profile, operation, filter, &canonical);
-    if let Some(alias) = macos_path_alias(&canonical) {
+    push_sbpl_path(profile, operation, filter, path);
+    if let Some(alias) = macos_path_alias(path) {
         push_sbpl_path(profile, operation, filter, &alias);
     }
 }

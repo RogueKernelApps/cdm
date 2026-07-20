@@ -150,7 +150,7 @@ impl Monitor {
                 let mut command = executable.command()?;
                 sanitize_gui_environment(&mut command);
                 command
-                    .args(prefix)
+                    .args(*prefix)
                     .arg(tail.path()?)
                     .arg("-f")
                     .arg(&self.log_path);

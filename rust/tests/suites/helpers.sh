@@ -24,13 +24,13 @@ export RED GREEN YELLOW BOLD NC
 
 check() {
     local name="$1" actual="$2" expect="$3"
-    if echo "$actual" | grep -Fq -- "$expect"; then
+    if grep -Fq -- "$expect" <<<"$actual"; then
         printf "  ${GREEN}PASS${NC} %s\n" "$name"
         PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} %s\n" "$name"
         echo "    expected to contain: $expect"
-        echo "    got: $(echo "$actual" | head -3)"
+        echo "    got: $(head -3 <<<"$actual")"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -50,7 +50,7 @@ check_eq() {
 
 check_not() {
     local name="$1" actual="$2" reject="$3"
-    if echo "$actual" | grep -Fq -- "$reject"; then
+    if grep -Fq -- "$reject" <<<"$actual"; then
         printf "  ${RED}FAIL${NC} %s\n" "$name"
         echo "    should NOT contain: $reject"
         FAIL=$((FAIL + 1))
@@ -67,7 +67,7 @@ check_empty() {
         PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} %s\n" "$name"
-        echo "    expected empty, got: $(echo "$actual" | head -3)"
+        echo "    expected empty, got: $(head -3 <<<"$actual")"
         FAIL=$((FAIL + 1))
     fi
 }

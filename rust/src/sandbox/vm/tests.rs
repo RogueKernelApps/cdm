@@ -251,6 +251,37 @@ fn launcher_profile_is_deny_first_and_preserves_share_modes() {
     )));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn launcher_profile_does_not_reresolve_frozen_share_paths() {
+    use std::os::unix::fs::symlink;
+
+    let mut cfg = SandboxConfig::new(Arc::new(CdmConfig::default())).unwrap();
+    let fixture = RootfsFixture::new("launcher-frozen-share");
+    let rootfs = fixture.root.join("rootfs");
+    let share = fixture.root.join("share");
+    let moved = fixture.root.join("moved-share");
+    let outside = fixture.root.join("outside");
+    for path in [&rootfs, &share, &outside] {
+        std::fs::create_dir(path).unwrap();
+    }
+    cfg.freeze_access().unwrap();
+    let frozen = share.canonicalize().unwrap();
+    let shares = vec![VirtioFsShare {
+        tag: "frozen".into(),
+        host_path: frozen.to_str().unwrap().to_string(),
+        read_only: true,
+    }];
+    std::fs::rename(&share, &moved).unwrap();
+    symlink(&outside, &share).unwrap();
+
+    let profile =
+        launcher_profile(&cfg, &std::env::current_exe().unwrap(), &rootfs, &shares).unwrap();
+
+    assert!(profile.contains(&frozen.display().to_string()));
+    assert!(!profile.contains(&outside.display().to_string()));
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn linux_vm_launcher_arguments_confine_vmm_and_translate_network_mode() {
@@ -494,6 +525,34 @@ fn missing_vm_denial_under_rw_export_fails_without_host_mutation() {
     assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     assert!(error.to_string().contains("without mutating the host"));
     assert!(!protected.exists());
+}
+
+#[test]
+fn guest_plan_uses_frozen_grant_kind_after_path_replacement() {
+    let fixture = RootfsFixture::new("frozen-grant-kind");
+    let workspace = fixture.root.join("workspace");
+    let grant = fixture.root.join("host-grant");
+    let moved = fixture.root.join("moved-host-grant");
+    std::fs::create_dir(&workspace).unwrap();
+    std::fs::create_dir(&grant).unwrap();
+    let mut cfg = SandboxConfig::new(Arc::new(CdmConfig::default())).unwrap();
+    cfg.work_dir = workspace;
+    cfg.access.add_allow_ro(grant.clone());
+    cfg.command = vec!["true".into()];
+    cfg.freeze_access().unwrap();
+    let frozen = grant.canonicalize().unwrap();
+
+    std::fs::rename(&grant, &moved).unwrap();
+    std::fs::write(&grant, "replacement").unwrap();
+    write_guest_plan(&fixture.root, &cfg, &HashMap::new()).unwrap();
+
+    let plan: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(fixture.root.join(GUEST_PLAN.trim_start_matches('/'))).unwrap(),
+    )
+    .unwrap();
+    assert!(plan["mounts"].as_array().unwrap().iter().any(|mount| {
+        mount["target"].as_str() == frozen.to_str() && mount["kind"].as_str() == Some("virtiofs")
+    }));
 }
 
 #[test]

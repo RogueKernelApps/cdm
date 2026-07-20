@@ -3,7 +3,6 @@
 use std::env;
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::{
@@ -43,21 +42,21 @@ pub fn run(args: cli::RunArgs) -> i32 {
         Ok(project) => project,
         Err(error) => {
             eprintln!("[cdm] error: {error}");
-            return 2;
+            return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
         }
     };
     let cdm_config = match config::load_with_presets(&project, &args.preset) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("[cdm] error: {error}");
-            return 2;
+            return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
         }
     };
     let mut cfg = match sandbox::SandboxConfig::from_loaded_config(cdm_config) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[cdm] error: {}", e);
-            return 1;
+            return lifecycle.fail_setup(report::LaunchStage::Setup, 1, Vec::new());
         }
     };
     lifecycle.attach_runtime(cfg.runtime_dir.clone());
@@ -76,7 +75,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
         Ok(policy) => policy,
         Err(error) => {
             eprintln!("[cdm] error: {error}");
-            return 2;
+            return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
         }
     };
     cfg.secure = args.sec;
@@ -103,7 +102,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
         #[cfg(not(feature = "vm"))]
         {
             eprintln!("[cdm] error: --vm and --vmi require a build compiled with --features vm");
-            return 2;
+            return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
         }
     }
     cfg.command = args.command;
@@ -116,7 +115,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
     let app_bundle = explicit_bundle.or(detected_bundle);
     if app_bundle.is_some() && cfg.use_vm {
         eprintln!("[cdm] error: application bundles cannot be combined with --vm or --vmi");
-        return 2;
+        return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
     }
     if cfg.command.is_empty() && app_bundle.is_none() {
         let shell = env::var_os("SHELL").unwrap_or_else(|| OsString::from("/bin/bash"));
@@ -127,7 +126,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
             Ok(plan) => plan,
             Err(error) => {
                 eprintln!("[cdm] error: app discovery: {error}");
-                return 2;
+                return lifecycle.fail_setup(report::LaunchStage::Setup, 2, Vec::new());
             }
         };
         for path in plan.allow_ro {
@@ -160,7 +159,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
         guard::check_command_with_config(&cfg.command, &cfg.config.guard.blocked_commands)
     {
         eprintln!("[cdm] {}", e);
-        return 2;
+        return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
     }
     lifecycle.set_failure_stage(report::LaunchStage::Setup);
 
@@ -190,7 +189,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
             Err(e) => {
                 eprintln!("[cdm] error: worktree: {}", e);
                 lifecycle.mark_worktree_setup_failed();
-                return 1;
+                return lifecycle.fail_setup(report::LaunchStage::Setup, 1, Vec::new());
             }
         }
     }
@@ -203,7 +202,6 @@ pub fn run(args: cli::RunArgs) -> i32 {
     if cfg.scramble {
         // --- Secret Scanning ---
         let _ = writeln!(io::stderr(), "[cdm] scanning for secrets...");
-        let home_dir = cfg.home_dir.to_string_lossy().to_string();
         let allow_home_path = |path: &std::path::Path| {
             cfg.access.host == access::HostAccess::Normal
                 || cfg
@@ -231,7 +229,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
         };
 
         // --- File Staging & Env Injection ---
-        if let Err(error) = stage_sensitive_files(&mut cfg, &home_dir) {
+        if let Err(error) = stage_sensitive_files(&mut cfg) {
             eprintln!("[cdm] error: secret staging failed: {error}");
             let sensitive_values = cfg.secrets.real_to_fake.keys().cloned().collect::<Vec<_>>();
             return lifecycle.fail_setup(report::LaunchStage::Setup, 1, sensitive_values);
@@ -240,7 +238,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
         let _ = writeln!(
             io::stderr(),
             "[cdm] {} secrets scrambled, {} env vars injected, {} paths denied",
-            cfg.secrets.real_to_fake.len(),
+            cfg.secrets.fake_to_real.len(),
             cfg.injected_env.len(),
             cfg.denied_read_paths.len(),
         );
@@ -257,7 +255,13 @@ pub fn run(args: cli::RunArgs) -> i32 {
             Err(error) => {
                 eprintln!("[cdm] error: monitor startup failed: {error}");
                 let sensitive_values = cfg.secrets.real_to_fake.keys().cloned().collect::<Vec<_>>();
-                return lifecycle.fail_setup(report::LaunchStage::Setup, 1, sensitive_values);
+                return fail_setup_with_config(
+                    &mut lifecycle,
+                    &mut cfg,
+                    report::LaunchStage::Setup,
+                    1,
+                    sensitive_values,
+                );
             }
         }
     } else {
@@ -269,7 +273,13 @@ pub fn run(args: cli::RunArgs) -> i32 {
         Err(error) => {
             eprintln!("[cdm] error: {error}");
             let sensitive_values = cfg.secrets.real_to_fake.keys().cloned().collect::<Vec<_>>();
-            return lifecycle.fail_setup(report::LaunchStage::Setup, 2, sensitive_values);
+            return fail_setup_with_config(
+                &mut lifecycle,
+                &mut cfg,
+                report::LaunchStage::Setup,
+                2,
+                sensitive_values,
+            );
         }
     };
     lifecycle.complete_setup_report(&cfg, &resolved_access);
@@ -305,7 +315,9 @@ pub fn run(args: cli::RunArgs) -> i32 {
                 eprintln!("[cdm] error: proxy startup failed: {error}");
                 lifecycle
                     .record_phase_now(report::LifecyclePhase::Proxy, report::PhaseState::Failed);
-                return lifecycle.fail_setup(
+                return fail_setup_with_config(
+                    &mut lifecycle,
+                    &mut cfg,
                     report::LaunchStage::Proxy,
                     1,
                     sensitive_values.clone(),
@@ -322,9 +334,11 @@ pub fn run(args: cli::RunArgs) -> i32 {
     lifecycle.record_phase_now(report::LifecyclePhase::Sandbox, report::PhaseState::Started);
     lifecycle.record_phase_now(report::LifecyclePhase::Child, report::PhaseState::Started);
     let mut transport_cleanup_error = None;
+    let mut staged_cleanup_error = None;
     let mut exit_code = match sandbox::run(cfg) {
         Ok(run) => {
             transport_cleanup_error = run.cleanup.err();
+            staged_cleanup_error = run.staged_cleanup.err();
             match run.child {
                 Ok(status) => {
                     lifecycle.record_phase_now(
@@ -380,13 +394,33 @@ pub fn run(args: cli::RunArgs) -> i32 {
         eprintln!("[cdm] error: sandbox transport cleanup failed: {error}");
         lifecycle.record_transport_cleanup_failure(&mut exit_code);
     }
+    if let Some(error) = staged_cleanup_error {
+        eprintln!("[cdm] error: staged secret cleanup failed: {error}");
+        lifecycle.record_staged_cleanup_failure(&mut exit_code);
+    }
 
     lifecycle.complete(exit_code, sensitive_values)
 }
 
+fn fail_setup_with_config(
+    lifecycle: &mut InvocationLifecycle,
+    cfg: &mut sandbox::SandboxConfig,
+    stage: report::LaunchStage,
+    mut exit_code: i32,
+    sensitive_values: Vec<String>,
+) -> i32 {
+    if let Some(file_stage) = cfg.file_stage.as_mut() {
+        if let Err(error) = file_stage.finish() {
+            eprintln!("[cdm] error: staged secret cleanup failed: {error}");
+            lifecycle.record_staged_cleanup_failure(&mut exit_code);
+        }
+    }
+    lifecycle.fail_setup(stage, exit_code, sensitive_values)
+}
+
 /// Finds sensitive files, creates obfuscated copies, and sets up env injection
 /// and read denial for each file.
-fn stage_sensitive_files(cfg: &mut sandbox::SandboxConfig, home_dir: &str) -> io::Result<()> {
+fn stage_sensitive_files(cfg: &mut sandbox::SandboxConfig) -> io::Result<()> {
     let allow_home_path = |path: &std::path::Path| {
         cfg.access.host == access::HostAccess::Normal
             || cfg
@@ -394,8 +428,8 @@ fn stage_sensitive_files(cfg: &mut sandbox::SandboxConfig, home_dir: &str) -> io
                 .explicitly_grants(path, &cfg.work_dir, &cfg.home_dir)
     };
     let sensitive_files = stage::find_sensitive_files_with_config(
-        &cfg.work_dir.to_string_lossy(),
-        home_dir,
+        &cfg.work_dir,
+        &cfg.home_dir,
         &cfg.config.secrets.env_files,
         &cfg.config.paths.staged_configs,
         &allow_home_path,
@@ -403,8 +437,6 @@ fn stage_sensitive_files(cfg: &mut sandbox::SandboxConfig, home_dir: &str) -> io
     if sensitive_files.is_empty() {
         return Ok(());
     }
-
-    let work_dir_str = cfg.work_dir.to_string_lossy().to_string();
 
     // Create obfuscated copies of all sensitive files
     let mut file_stage = stage::FileStage::new_with_config(
@@ -414,34 +446,59 @@ fn stage_sensitive_files(cfg: &mut sandbox::SandboxConfig, home_dir: &str) -> io
         cfg.config.secrets.min_length,
         cfg.config.secrets.min_char_classes,
     )?;
-    for path in &sensitive_files {
-        file_stage.stage_file(path)?;
+    let sensitive_paths = sensitive_files
+        .iter()
+        .map(|source| source.path.clone())
+        .collect::<Vec<_>>();
+    for source in sensitive_files {
+        if let Err(error) = file_stage.stage_sensitive_file(source) {
+            return match file_stage.finish() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io::Error::new(
+                    error.kind(),
+                    format!("{error}; staged secret cleanup also failed: {cleanup}"),
+                )),
+            };
+        }
     }
     cfg.file_stage = Some(file_stage);
 
     // Classify each sensitive file and set up env injection / read denial
-    for path_str in &sensitive_files {
-        let kind = stage::classify_sensitive_file(path_str, &work_dir_str, home_dir);
+    for path in sensitive_paths {
+        let kind = stage::classify_sensitive_file(&path, &cfg.work_dir, &cfg.home_dir);
 
         match kind {
             stage::SensitiveFileKind::EnvFile => {
-                inject_env_file_entries(cfg, path_str)?;
+                inject_env_file_entries(cfg, &path)?;
             }
             stage::SensitiveFileKind::HomeConfig => {
-                inject_config_redirect(cfg, path_str, home_dir);
+                inject_config_redirect(cfg, &path);
             }
             stage::SensitiveFileKind::SshKey => {}
         }
 
-        cfg.denied_read_paths.push(PathBuf::from(path_str));
+        cfg.denied_read_paths.push(path);
     }
     Ok(())
 }
 
 /// Parses a .env file and injects its entries into the sandbox environment,
 /// obfuscating every value already recognized by the conservative scanner.
-fn inject_env_file_entries(cfg: &mut sandbox::SandboxConfig, path: &str) -> io::Result<()> {
-    for (key, value) in stage::parse_env_file_entries(path)? {
+fn inject_env_file_entries(
+    cfg: &mut sandbox::SandboxConfig,
+    path: &std::path::Path,
+) -> io::Result<()> {
+    let staged = cfg
+        .file_stage
+        .as_ref()
+        .and_then(|stage| {
+            stage
+                .staged_files()
+                .iter()
+                .find(|file| file.original_path == path)
+        })
+        .ok_or_else(|| io::Error::other("staged environment file is missing"))?;
+    for (key, value) in stage::parse_env_file_entries(&staged.staged_path)? {
         let injected = cfg
             .secrets
             .real_to_fake
@@ -455,14 +512,14 @@ fn inject_env_file_entries(cfg: &mut sandbox::SandboxConfig, path: &str) -> io::
 
 /// Redirects a home directory config file to its obfuscated staged copy
 /// via environment variables.
-fn inject_config_redirect(cfg: &mut sandbox::SandboxConfig, path: &str, home_dir: &str) {
+fn inject_config_redirect(cfg: &mut sandbox::SandboxConfig, path: &std::path::Path) {
     let Some(ref file_stage) = cfg.file_stage else {
         return;
     };
     let Some(sf) = file_stage
         .staged_files()
         .iter()
-        .find(|sf| sf.original_path.to_string_lossy() == path)
+        .find(|sf| sf.original_path == path)
     else {
         return;
     };
@@ -470,7 +527,7 @@ fn inject_config_redirect(cfg: &mut sandbox::SandboxConfig, path: &str, home_dir
     for (key, value) in stage::redirect_env_for_staged_file_with_config(
         &sf.original_path,
         &sf.staged_path,
-        home_dir,
+        &cfg.home_dir,
         &cfg.config.paths.staged_configs,
     ) {
         cfg.injected_env.insert(key, value);

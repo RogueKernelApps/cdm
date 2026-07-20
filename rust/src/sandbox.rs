@@ -88,6 +88,7 @@ pub struct SandboxConfig {
 pub struct SandboxRun {
     pub child: io::Result<crate::process::ChildStatus>,
     pub cleanup: io::Result<()>,
+    pub staged_cleanup: io::Result<()>,
 }
 
 impl SandboxRun {
@@ -95,6 +96,7 @@ impl SandboxRun {
         Self {
             child: Ok(status),
             cleanup: Ok(()),
+            staged_cleanup: Ok(()),
         }
     }
 }
@@ -112,13 +114,13 @@ impl SandboxConfig {
     }
 
     fn new_with_access(config: Arc<CdmConfig>, access: AccessPolicy) -> io::Result<Self> {
-        let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let home_dir = std::env::var_os("HOME").unwrap_or_else(|| OsString::from("/root"));
         let work_dir = resolve_work_dir(std::env::current_dir(), std::env::var_os("PWD"))?;
         let runtime_dir = prepare_runtime_dir()?;
 
         let proxy_port = config.proxy.default_port;
 
-        let home = PathBuf::from(&home_dir);
+        let home = PathBuf::from(home_dir);
 
         Ok(SandboxConfig {
             command: Vec::new(),
@@ -159,7 +161,10 @@ impl SandboxConfig {
         // Passthrough variables (from config)
         for var in &self.config.env.passthrough {
             if let Some(value) = host_environment.get(var) {
-                env.insert(var.clone(), value.clone());
+                env.insert(
+                    var.clone(),
+                    self.secrets.obfuscate_environment_value(var, value),
+                );
             }
         }
 
@@ -183,7 +188,7 @@ impl SandboxConfig {
                 continue;
             }
             // Obfuscate secrets in env values
-            let obfuscated = self.secrets.obfuscate(&value);
+            let obfuscated = self.secrets.obfuscate_environment_value(&key, &value);
             env.insert(key, obfuscated);
         }
 
@@ -482,33 +487,80 @@ fn resolve_work_dir(
 
 /// Runs a command in the platform-appropriate sandbox.
 pub fn run(cfg: SandboxConfig) -> io::Result<SandboxRun> {
-    if cfg.use_vm {
+    let stage_dir = cfg
+        .file_stage
+        .as_ref()
+        .map(|stage| stage.temp_dir_path().to_path_buf());
+    if let Err(error) = cfg
+        .resolved_access()
+        .and_then(ResolvedAccessPolicy::verify_identities)
+    {
+        drop(cfg);
+        let staged_cleanup = stage_dir.map_or(Ok(()), |path| cleanup_stage_dir(&path));
+        return Ok(SandboxRun {
+            child: Err(error),
+            cleanup: Ok(()),
+            staged_cleanup,
+        });
+    }
+    let use_vm = cfg.use_vm;
+    let result = if use_vm {
         #[cfg(feature = "vm")]
-        return vm::run_vm(cfg);
+        {
+            vm::run_vm(cfg)
+        }
 
         #[cfg(not(feature = "vm"))]
-        return Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "VM support is not compiled in; rebuild with --features vm",
-        ));
-    }
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "VM support is not compiled in; rebuild with --features vm",
+            ))
+        }
+    } else {
+        #[cfg(target_os = "macos")]
+        {
+            darwin::run_darwin(cfg).map(SandboxRun::completed)
+        }
 
-    #[cfg(target_os = "macos")]
-    {
-        darwin::run_darwin(cfg).map(SandboxRun::completed)
-    }
+        #[cfg(target_os = "linux")]
+        {
+            linux::run_linux(cfg)
+        }
 
-    #[cfg(target_os = "linux")]
-    {
-        linux::run_linux(cfg)
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("unsupported platform: {}", std::env::consts::OS),
+            ))
+        }
+    };
+    let stage_cleanup = stage_dir.map_or(Ok(()), |path| cleanup_stage_dir(&path));
+    match result {
+        Ok(mut run) => {
+            run.staged_cleanup = stage_cleanup;
+            Ok(run)
+        }
+        Err(error) => Ok(SandboxRun {
+            child: Err(error),
+            cleanup: Ok(()),
+            staged_cleanup: stage_cleanup,
+        }),
     }
+}
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("unsupported platform: {}", std::env::consts::OS),
-        ))
+fn cleanup_stage_dir(path: &std::path::Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "staged secret path changed type",
+            ))
+        }
+        Ok(_) => std::fs::remove_dir_all(path),
     }
 }
 

@@ -2,7 +2,7 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-toolchain=${RUSTUP_TOOLCHAIN:-1.90}
+toolchain=${RUSTUP_TOOLCHAIN:-1.90.0}
 
 (cd "$here" && RUSTUP_TOOLCHAIN="$toolchain" cargo fmt --check)
 (cd "$here" && RUSTUP_TOOLCHAIN="$toolchain" cargo test --locked --all-targets)

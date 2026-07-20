@@ -325,6 +325,50 @@ fn collision_retries_are_bounded_and_avoid_existing_reals() {
 }
 
 #[test]
+fn a_registered_fake_cannot_later_become_a_real_secret() {
+    let mut mapping = SecretMapping::new();
+    let first_fake = mapping
+        .add_with_random("BBBB".to_string(), &mut ConstantRandom(0))
+        .unwrap();
+
+    let error = mapping
+        .add_with_random(first_fake.clone(), &mut IncrementingRandom(2))
+        .unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(!error.to_string().contains(&first_fake));
+    assert_eq!(mapping.real_to_fake.len(), 1);
+    assert_eq!(mapping.fake_to_real.len(), 1);
+}
+
+#[test]
+fn replacements_never_rescan_generated_output() {
+    let mut mapping = SecretMapping::new();
+    mapping.real_to_fake.insert("A".into(), "B".into());
+    mapping.real_to_fake.insert("BB".into(), "AA".into());
+    mapping.fake_to_real.insert("B".into(), "A".into());
+    mapping.fake_to_real.insert("AA".into(), "BB".into());
+
+    assert_eq!(mapping.obfuscate("BB"), "AA");
+    assert_eq!(mapping.deobfuscate("AA"), "BB");
+}
+
+#[test]
+fn short_environment_secrets_are_replaced_only_in_their_originating_field() {
+    let mut mapping = SecretMapping::new();
+    let fake = mapping
+        .add_environment_scoped("PIN".into(), "a".into(), Vec::new())
+        .unwrap();
+
+    assert_eq!(mapping.obfuscate_environment_value("PIN", "a"), fake);
+    assert_eq!(mapping.obfuscate("cat"), "cat");
+    assert_ne!(
+        String::from_utf8(mapping.scrub_response_bytes(b"a")).unwrap(),
+        "a"
+    );
+}
+
+#[test]
 fn values_without_replaceable_characters_fail_without_leaking() {
     let secret = "-----";
     let error = generate_fake_with_random(secret, &mut ConstantRandom(7)).unwrap_err();
@@ -414,6 +458,61 @@ fn host_scan_ignores_absent_optional_candidates() {
     config.secrets.env_files = vec![".env".into()];
 
     let mapping = scan_host(&home, &work, &config, &|_| true).unwrap();
+    assert!(mapping.real_to_fake.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn host_scan_rejects_secret_files_beneath_symlinked_ancestors() {
+    use std::os::unix::fs::symlink;
+
+    let dir = test_dir("ancestor-symlink-scan");
+    let home = dir.join("home");
+    let work = dir.join("work");
+    let outside = dir.join("outside");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&work).unwrap();
+    fs::create_dir(&outside).unwrap();
+    let secret = "outside-secret-must-not-appear";
+    fs::write(outside.join("candidate.env"), format!("API_KEY={secret}\n")).unwrap();
+    symlink(&outside, work.join("linked")).unwrap();
+
+    let mut config = CdmConfig::default();
+    config.paths.staged_configs.clear();
+    config.secrets.env_files = vec!["linked/candidate.env".into()];
+
+    let error = match scan_host(&home, &work, &config, &|_| true) {
+        Ok(_) => panic!("ancestor symlink was followed"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error.kind(),
+        io::ErrorKind::NotADirectory | io::ErrorKind::InvalidData
+    ));
+    assert!(!error.to_string().contains(secret));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn host_scan_pins_a_legitimate_symlinked_category_root() {
+    use std::os::unix::fs::symlink;
+
+    let dir = test_dir("symlinked-category-root");
+    let real_home = dir.join("real-home");
+    let home = dir.join("home");
+    let work = dir.join("work");
+    fs::create_dir(&real_home).unwrap();
+    fs::create_dir(&work).unwrap();
+    symlink(&real_home, &home).unwrap();
+    let mut config = CdmConfig::default();
+    config.secrets.name_patterns.clear();
+    config.paths.staged_configs.clear();
+    config.secrets.env_files.clear();
+
+    let mapping = scan_host(&home, &work, &config, &|_| true).unwrap();
+
     assert!(mapping.real_to_fake.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }

@@ -580,3 +580,16 @@ fn custom_global_config_requires_a_dedicated_secure_parent() {
     assert!(error.to_string().contains("real directory"));
     let _ = std::fs::remove_dir_all(temp);
 }
+
+#[cfg(unix)]
+#[test]
+fn trust_store_keys_reject_non_utf8_paths() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let path = PathBuf::from(std::ffi::OsString::from_vec(b"project-\xff".to_vec()));
+    let error = path_key(&path).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert!(error
+        .to_string()
+        .contains("filesystem policy paths must be valid UTF-8"));
+}

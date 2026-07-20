@@ -3,8 +3,10 @@
 #[cfg(test)]
 use crate::config::PathsConfig;
 use crate::config::{ConfiguredPath, ConfiguredPaths};
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,8 @@ pub struct ResolvedAccessPolicy {
     pub deny_read_rules: Vec<ResolvedDenyRule>,
     pub deny_write_rules: Vec<ResolvedDenyRule>,
     pub runtime_ro: Vec<PathBuf>,
+    path_kinds: BTreeMap<PathBuf, DeniedPathKind>,
+    path_identities: BTreeMap<PathBuf, Option<PathIdentity>>,
     /// Host runtime trees replaced by empty, synthetic directories by adapters.
     /// These are policy decisions, not adapter-specific heuristics.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -89,6 +93,13 @@ pub enum DeniedPathKind {
     Other,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PathIdentity {
+    device: u64,
+    inode: u64,
+    kind: DeniedPathKind,
+}
+
 /// A hard denial resolved at a single point in time. Both path spellings are
 /// retained because denying only a symlink's target leaves its lexical name
 /// available for replacement, while denying only the name leaves the target
@@ -108,6 +119,28 @@ pub struct ResolvedDenyRule {
 }
 
 impl ResolvedAccessPolicy {
+    pub fn kind(&self, path: &Path) -> Option<DeniedPathKind> {
+        self.path_kinds.get(path).copied()
+    }
+
+    pub fn verify_identities(&self) -> io::Result<()> {
+        for (path, expected) in &self.path_identities {
+            let current = path_identity_optional(path).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("resolved filesystem path changed before launch: {error}"),
+                )
+            })?;
+            if &current != expected {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "resolved filesystem path identity changed before launch",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     #[cfg(any(feature = "vm", test))]
     pub fn denies_read(&self, path: &Path) -> bool {
         self.deny_read_rules
@@ -328,6 +361,41 @@ impl AccessPolicy {
         }
         let synthetic_mounts = collapsed;
 
+        validate_policy_paths(
+            [&work_dir, &home_dir]
+                .into_iter()
+                .chain(allow_ro.iter())
+                .chain(allow_rw.iter())
+                .chain(runtime_ro.iter())
+                .chain(synthetic_dirs.iter())
+                .chain(synthetic_mounts.iter())
+                .map(PathBuf::as_path)
+                .chain(deny_read_rules.iter().flat_map(ResolvedDenyRule::paths))
+                .chain(deny_write_rules.iter().flat_map(ResolvedDenyRule::paths))
+                .chain(
+                    deny_read_rules
+                        .iter()
+                        .chain(&deny_write_rules)
+                        .flat_map(|rule| rule.missing_parents.iter().map(PathBuf::as_path)),
+                ),
+        )?;
+        let path_kinds: BTreeMap<PathBuf, DeniedPathKind> = [&work_dir]
+            .into_iter()
+            .chain(allow_ro.iter())
+            .chain(allow_rw.iter())
+            .chain(runtime_ro.iter())
+            .map(|path| (path.clone(), path_kind(path)))
+            .collect();
+        let mut path_identities = BTreeMap::new();
+        for path in [&work_dir]
+            .into_iter()
+            .chain(allow_ro.iter())
+            .chain(allow_rw.iter())
+            .chain(runtime_ro.iter())
+        {
+            path_identities.insert(path.clone(), path_identity_optional(path)?);
+        }
+
         Ok(ResolvedAccessPolicy {
             workspace: self.workspace,
             host: self.host,
@@ -337,6 +405,8 @@ impl AccessPolicy {
             deny_read_rules,
             deny_write_rules,
             runtime_ro,
+            path_kinds,
+            path_identities,
             synthetic_dirs,
             synthetic_mounts,
         })
@@ -365,6 +435,48 @@ impl AccessPolicy {
             .chain(self.discovered_allow_rw.iter().cloned())
             .filter_map(|grant| grant.canonicalize().ok())
             .any(|grant| path == grant || path.starts_with(grant))
+    }
+}
+
+fn validate_policy_paths<'a>(paths: impl IntoIterator<Item = &'a Path>) -> io::Result<()> {
+    if paths.into_iter().any(|path| path.to_str().is_none()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "filesystem policy paths must be valid UTF-8",
+        ));
+    }
+    Ok(())
+}
+
+fn path_kind(path: &Path) -> DeniedPathKind {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => DeniedPathKind::File,
+        Ok(metadata) if metadata.is_dir() => DeniedPathKind::Directory,
+        Ok(_) => DeniedPathKind::Other,
+        Err(_) => DeniedPathKind::Missing,
+    }
+}
+
+fn path_identity(path: &Path) -> io::Result<PathIdentity> {
+    let metadata = std::fs::metadata(path)?;
+    Ok(PathIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        kind: if metadata.is_file() {
+            DeniedPathKind::File
+        } else if metadata.is_dir() {
+            DeniedPathKind::Directory
+        } else {
+            DeniedPathKind::Other
+        },
+    })
+}
+
+fn path_identity_optional(path: &Path) -> io::Result<Option<PathIdentity>> {
+    match path_identity(path) {
+        Ok(identity) => Ok(Some(identity)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -612,11 +724,10 @@ fn resolve_config_path(path: &ConfiguredPath, home_dir: &Path) -> PathBuf {
 }
 
 fn resolve_path(path: &Path, work_dir: &Path, home_dir: &Path) -> PathBuf {
-    let raw = path.to_string_lossy();
-    if raw == "~" {
+    if path == Path::new("~") {
         return home_dir.to_path_buf();
     }
-    if let Some(rest) = raw.strip_prefix("~/") {
+    if let Ok(rest) = path.strip_prefix("~") {
         return home_dir.join(rest);
     }
     if path.is_absolute() {

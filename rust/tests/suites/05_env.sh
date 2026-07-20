@@ -6,10 +6,10 @@
 section "Secret preparation fails closed before adapter launch"
 
 assert_secret_prelaunch_failure() {
-    local name="$1" workspace="$2" secret_text="$3"
+    local name="$1" workspace="$2" secret_text="$3" config_path="${4:-$CDM_CONFIG_PATH}"
     local stderr status
 
-    stderr=$(cd "$workspace" && \
+    stderr=$(cd "$workspace" && CDM_CONFIG_PATH="$config_path" \
         "$CDM" --rw --scramble --no-network -- sh -c \
         'printf "child-ran\n" > child-marker' 2>&1 >/dev/null)
     status=$?
@@ -37,6 +37,22 @@ mkdir -p "$SYMLINK_WORK"
 printf 'API_KEY=%s\n' "$SYMLINK_SECRET" > "$SECRET_FAILURE_ROOT/external.env"
 ln -s "$SECRET_FAILURE_ROOT/external.env" "$SYMLINK_WORK/.env"
 assert_secret_prelaunch_failure "symlinked .env" "$SYMLINK_WORK" "$SYMLINK_SECRET"
+
+ANCESTOR_WORK="$SECRET_FAILURE_ROOT/ancestor-work"
+ANCESTOR_OUTSIDE="$SECRET_FAILURE_ROOT/ancestor-outside"
+ANCESTOR_POLICY="$SECRET_FAILURE_ROOT/ancestor-policy"
+ANCESTOR_SECRET="ancestor-secret-content-2d5480c7"
+mkdir -p "$ANCESTOR_WORK" "$ANCESTOR_OUTSIDE" "$ANCESTOR_POLICY"
+chmod 700 "$ANCESTOR_POLICY"
+printf 'API_KEY=%s\n' "$ANCESTOR_SECRET" > "$ANCESTOR_OUTSIDE/candidate.env"
+ln -s "$ANCESTOR_OUTSIDE" "$ANCESTOR_WORK/linked"
+printf '{"secrets":{"env_files":["linked/candidate.env"]}}\n' \
+    > "$ANCESTOR_POLICY/config.json"
+assert_secret_prelaunch_failure \
+    "ancestor-symlinked environment file" \
+    "$ANCESTOR_WORK" \
+    "$ANCESTOR_SECRET" \
+    "$ANCESTOR_POLICY/config.json"
 
 MALFORMED_WORK="$SECRET_FAILURE_ROOT/malformed-work"
 MALFORMED_SECRET="malformed-secret-content-8c12e9a4"
@@ -75,6 +91,18 @@ echo ""
 section "Explicit secret scrambling (cross-mode)"
 
 for mode in $MODES; do
+    OUT=$(ONE_CHAR_API_KEY=a mode_exec "$mode" --scramble --no-network sh -c \
+        'printf "%s|%s" "$ONE_CHAR_API_KEY" "$1"' sh cat)
+    check_eq "$mode: one-character secret leaves unrelated argv unchanged" \
+        "${OUT#*|}" "cat"
+    check_eq "$mode: one-character secret is not exposed" \
+        "$(test "${OUT%%|*}" != a; echo $?)" "0"
+
+    OUT=$(SHORT_API_KEY=abc mode_exec "$mode" --scramble --no-network sh -c \
+        'printf "%s" "$SHORT_API_KEY"')
+    check_nonempty "$mode: --scramble injects a short secret-named value" "$OUT"
+    check_not "$mode: --scramble hides a short secret-named value" "$OUT" "abc"
+
     OUT=$(mode_exec "$mode" --scramble --no-network sh -c 'printf "%s" "$API_KEY"')
     check_nonempty "$mode: --scramble injects API_KEY" "$OUT"
     check_not "$mode: --scramble hides the real API_KEY" "$OUT" "sk-test-a1b2c3d4"

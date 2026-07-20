@@ -515,7 +515,9 @@ fn shell_quote(value: &str) -> String {
 fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> {
     let access = cfg.resolved_access()?;
     for path in access.allow_ro.iter().chain(access.allow_rw.iter()) {
-        if path.is_file() && !path.starts_with(&access.work_dir) {
+        if access.kind(path) == Some(crate::access::DeniedPathKind::File)
+            && !path.starts_with(&access.work_dir)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(
@@ -528,7 +530,7 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
     let mut shares = Vec::new();
     shares.push(VirtioFsShare {
         tag: TAG_WORKDIR.to_string(),
-        host_path: cfg.work_dir.to_string_lossy().to_string(),
+        host_path: access.work_dir.to_string_lossy().to_string(),
         read_only: access.workspace == crate::access::WorkspaceAccess::ReadOnly,
     });
 
@@ -556,7 +558,7 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
         }
         shares.push(VirtioFsShare {
             tag: format!("cdm-allow-ro-{index}"),
-            host_path: virtiofs_source(path).to_string_lossy().to_string(),
+            host_path: path.to_string_lossy().to_string(),
             read_only: true,
         });
     }
@@ -566,7 +568,7 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
         }
         shares.push(VirtioFsShare {
             tag: format!("cdm-allow-rw-{index}"),
-            host_path: virtiofs_source(path).to_string_lossy().to_string(),
+            host_path: path.to_string_lossy().to_string(),
             read_only: false,
         });
     }
@@ -581,7 +583,9 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
         {
             shares.push(VirtioFsShare {
                 tag: format!("cdm-deny-write-{index}-{variant}"),
-                host_path: virtiofs_source(path).to_string_lossy().to_string(),
+                host_path: virtiofs_source(path, rule.kind)
+                    .to_string_lossy()
+                    .to_string(),
                 read_only: true,
             });
         }
@@ -590,8 +594,8 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
     Ok(shares)
 }
 
-fn virtiofs_source(path: &Path) -> &Path {
-    if path.is_dir() {
+fn virtiofs_source(path: &Path, kind: crate::access::DeniedPathKind) -> &Path {
+    if kind == crate::access::DeniedPathKind::Directory {
         path
     } else {
         path.parent().unwrap_or(Path::new("/"))

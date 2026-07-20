@@ -5,10 +5,15 @@ Read the repository-root `AGENTS.md` first.
 - `src/cli.rs` owns typed argument parsing, help, and generated completion; `src/main.rs` owns top-level dispatch and internal launcher entry points; `src/invocation.rs` owns command ordering behind one `run` interface, while its private `invocation/lifecycle.rs` module owns resource cleanup, reporting, and exit-code aggregation.
 - `src/project.rs` owns original-launch project root, project-config discovery, and deterministic kind reporting; detection must never grant access.
 - `src/config.rs` owns exact-byte project trust and global preset layering. Project policy must remain untrusted after any byte edit, and policy/trust files plus their containing directories must remain hard write-denied. Custom global policy must fail closed unless its dedicated parent can be validated and denied in full.
-- `src/access.rs` owns resolved filesystem policy and hard denials.
+- `src/access.rs` owns resolved filesystem policy, hard denials, frozen path
+  kinds, and launch-time device/inode verification. Adapters must not
+  canonicalize or reclassify policy paths after resolution.
 - `src/app.rs` owns macOS application-bundle discovery.
 - `src/worktree.rs` owns Git-visible state snapshotting, branch reservation, descriptor-relative no-follow finalization, and cleanup.
 - `src/trusted_exec.rs` owns validation and identity pinning for host-side helper executables. Never add a PATH-resolved pre/post-sandbox helper elsewhere.
+- `src/anchored.rs` owns descriptor-relative, no-follow reads beneath pinned
+  category roots. Secret discovery and staging must pass opened descriptors
+  through parsing and copying rather than reopening candidate pathnames.
 - `src/sandbox/` owns adapter translation and VM/rootfs mechanics. Within VM
   mode, `sandbox/vm.rs` orchestrates the disposable rootfs,
   `sandbox/vm/launcher.rs` exclusively owns the private launcher protocol,

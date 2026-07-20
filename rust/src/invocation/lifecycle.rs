@@ -111,6 +111,10 @@ impl InvocationLifecycle {
         self.record_cleanup_failure(report::CleanupStage::Transport, exit_code);
     }
 
+    pub(super) fn record_staged_cleanup_failure(&mut self, exit_code: &mut i32) {
+        self.record_cleanup_failure(report::CleanupStage::StagedFiles, exit_code);
+    }
+
     pub(super) fn attach_runtime(&mut self, path: PathBuf) {
         debug_assert!(self.runtime.is_none());
         self.runtime = Some(RuntimeCleanup::new(path));
@@ -140,18 +144,33 @@ impl InvocationLifecycle {
         mut exit_code: i32,
         sensitive_values: Vec<String>,
     ) -> i32 {
+        if let Some(mut session) = self.proxy.take() {
+            if let Err(error) = session.stop() {
+                eprintln!("[cdm] error: proxy shutdown failed: {error}");
+                self.record_cleanup_failure(report::CleanupStage::Proxy, &mut exit_code);
+            }
+        }
         self.discard_worktree();
         let elapsed = self.elapsed_ms();
-        self.report.report.record_phase(
-            elapsed,
-            report::LifecyclePhase::Setup,
-            report::PhaseState::Failed,
-        );
+        let phase = if stage == report::LaunchStage::Validation {
+            report::LifecyclePhase::Validation
+        } else {
+            report::LifecyclePhase::Setup
+        };
+        self.report
+            .report
+            .record_phase(elapsed, phase, report::PhaseState::Failed);
         self.report
             .report
             .finish(elapsed, report::ChildOutcome::LaunchFailed { stage });
         self.finish_monitor(&mut exit_code);
         self.finish_runtime();
+        if matches!(
+            self.report.report.outcome.cleanup,
+            report::CleanupOutcome::Pending
+        ) {
+            self.report.report.outcome.cleanup = report::CleanupOutcome::Succeeded;
+        }
         self.report.set_sensitive_values(sensitive_values);
         self.report.publish();
         exit_code
@@ -385,7 +404,7 @@ impl InvocationReport {
             );
         }
         if matches!(self.report.outcome.cleanup, report::CleanupOutcome::Pending) {
-            self.report.outcome.cleanup = report::CleanupOutcome::Succeeded;
+            self.report.outcome.cleanup = report::CleanupOutcome::Incomplete;
         }
         if !self.report.has_phase(report::LifecyclePhase::Cleanup) {
             let state = if matches!(
@@ -479,7 +498,7 @@ fn build_session_report(
         },
     );
     report.execution.argument_count = cfg.command.len() as u64;
-    report.counters.secrets.configured = cfg.secrets.real_to_fake.len() as u64;
+    report.counters.secrets.configured = cfg.secrets.fake_to_real.len() as u64;
     report.counters.secrets.staged_files = cfg
         .file_stage
         .as_ref()
@@ -546,7 +565,7 @@ impl Drop for RuntimeCleanup {
 
 #[cfg(test)]
 mod tests {
-    use super::{preserve_failure, record_cleanup_failure};
+    use super::{preserve_failure, record_cleanup_failure, InvocationReport};
     use crate::report::{Backend, CleanupOutcome, CleanupStage, SessionReport};
 
     #[test]
@@ -571,5 +590,34 @@ mod tests {
                 stage: CleanupStage::RuntimeDirectory
             }
         );
+    }
+
+    #[test]
+    fn fail_safe_publication_never_claims_pending_cleanup_succeeded() {
+        let mut report = InvocationReport::new(
+            None,
+            false,
+            std::time::Instant::now(),
+            SessionReport::provisional(0, Backend::Seatbelt, 1),
+        );
+
+        report.complete_unfinished_outcomes();
+
+        assert_eq!(report.report.outcome.cleanup, CleanupOutcome::Incomplete);
+    }
+
+    #[test]
+    fn explicit_runtime_cleanup_failure_upgrades_successful_exit() {
+        let path =
+            std::env::temp_dir().join(format!("cdm-runtime-cleanup-file-{}", std::process::id()));
+        std::fs::write(&path, "not a directory").unwrap();
+        let mut lifecycle =
+            super::InvocationLifecycle::provisional(None, false, Backend::Seatbelt, 1);
+        lifecycle.attach_runtime(path.clone());
+
+        let exit_code = lifecycle.complete(0, Vec::new());
+
+        assert_eq!(exit_code, 1);
+        std::fs::remove_file(path).unwrap();
     }
 }

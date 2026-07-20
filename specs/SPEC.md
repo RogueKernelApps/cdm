@@ -112,6 +112,11 @@ escalation.
 - bounded typed lifecycle events with an explicit dropped-event count; and
 - typed child, cleanup, and worktree outcomes.
 
+Cleanup is `succeeded` only after every explicitly owned cleanup operation
+completes. A fail-safe report emitted during an unexpected unwind records
+`incomplete`, never success; an observed cleanup error records its typed failed
+stage and upgrades an otherwise successful invocation to failure.
+
 It must not include argv values, filesystem paths, domains, environment values, free-form diagnostics, branch names, or secret material. Before writing, CDM scans the serialized bytes for every known real secret and fails closed on a match. The destination is installed atomically with mode `0600` using a directory descriptor pinned before sandbox entry. CDM rejects a symlink destination and revalidates the parent device/inode before publication; replacement of the parent is an error, not a redirected or silently lost write. File and parent directory are synced before success is reported.
 
 Detailed events are capped at 128; aggregate counters continue saturating after that cap. Validation, setup, proxy, sandbox, child, worktree, and cleanup phases are typed. Nonzero and signaled children are failed child phases while retaining their exact outcome. Observation metadata must remain honest: the current filesystem-denial count is `not_instrumented`, and proxied request observation is `partial`. `--stats` renders a compact aggregate view to stderr through a caller-provided writer and must not write to stdout.
@@ -198,7 +203,7 @@ This entire section is active only for `--scramble` or `--sec`. Without either f
 ### 3.1 Detection
 
 Scan these sources in order:
-1. **Environment variables** — flag by name only (contains: `key`, `secret`, `token`, `bearer`, `password`, `passwd`, `credential`, `api_key`, `apikey`, `auth`, `private`, `access_key`, `oauth`). Skip known non-secret vars (PATH, HOME, TMPDIR, etc.). Value-based heuristic detection is NOT used for env var scanning.
+1. **Environment variables** — flag every nonempty value by name only (contains: `key`, `secret`, `token`, `bearer`, `password`, `passwd`, `credential`, `api_key`, `apikey`, `auth`, `private`, `access_key`, `oauth`), regardless of value length. Skip known non-secret vars (PATH, HOME, TMPDIR, etc.). Value-based heuristic detection is NOT used for env var scanning.
 2. **~/.aws/credentials** and **~/.aws/config** — parse key=value lines.
 3. **~/.ssh/** — scan for files containing `PRIVATE KEY`.
 4. **.env files** in working directory — `.env`, `.env.local`, `.env.development`, `.env.production`, `.env.staging`, `.env.test`.
@@ -206,13 +211,16 @@ Scan these sources in order:
 
 Under `--iso`, home-directory credential discovery and staging are disabled unless an explicit `--allow-ro`/`--allow-rw` grant covers the path. When scrambling is enabled, environment variables and project `.env*` files remain in scope.
 
-Configured candidate files are optional when absent. Once a candidate exists,
-CDM requires a symlink-free regular file and propagates inspection, open, decode,
-parse, random-generation, and staging failures. Preparation stops before the child
-or proxy-facing workload launches, and diagnostics identify the operation and path
+Configured candidate files are optional when absent. CDM pins the workspace and
+home category roots, opens every descendant directory component descriptor-
+relatively with no-follow semantics, and reads a regular leaf only through the
+already-open descriptor that is passed into parsing and staging. An ancestor or
+leaf symlink, concurrent replacement, unreadable entry, decode error, parse error,
+random-generation failure, or staging failure stops preparation before the child
+or proxy-facing workload launches. Diagnostics identify the operation and path
 without including file contents or secret values. SSH directory traversal follows
-the same rule: an absent directory is optional, but an existing unreadable or
-malformed entry is an error.
+the same descriptor-relative rule; an absent directory is optional, but an
+existing unsafe or malformed entry is an error.
 Configured candidate names must be non-empty relative paths without `..`; they
 cannot escape the workspace or home base used for their category.
 
@@ -248,14 +256,25 @@ still protected when their key name matches the configured secret-name patterns.
 ### 3.2 Fake Generation
 
 For each detected secret value:
-1. Generate a fake of **identical length**.
+1. Generate a fake of **identical length** for ordinary global replacements.
+   Secret-named environment values shorter than eight bytes instead receive a
+   long random sentinel that is substituted only in that originating field;
+   their short raw value is never used as an unrestricted substring pattern.
 2. Each character replaced by a random character of the **same class**: uppercase→uppercase, lowercase→lowercase, digit→digit, special chars preserved as-is.
 3. Use cryptographically secure random (`/dev/urandom`). Random-source failures
    abort preparation; they never panic or fall back to predictable bytes.
-4. Require fake != real and reject collisions with existing real or fake values,
-   with bounded retry attempts.
+4. Require fake != real, require the complete real-value and fake-value sets to
+   remain disjoint (including when a newly discovered real equals an existing
+   fake), and reject collisions with bounded retry attempts.
 5. Store bidirectional mapping: `real↔fake` in host memory only.
 6. Idempotent: adding the same real value twice returns the same fake.
+
+Replacement is a longest-match, single pass over the original input. Generated
+output is never scanned again, so overlapping real/fake strings cannot form a
+replacement chain that reconstructs a real value. Short environment sentinels
+remain restorable by the authorized proxy and are included in upstream-response
+scrubbing. A secret-named file value shorter than eight bytes fails preparation
+because raw substring replacement would be ambiguous.
 
 ### Expected Outcome
 ```
@@ -572,7 +591,7 @@ Relative paths are resolved relative to `$HOME`. Absolute paths used as-is.
 
 For global and preset `paths.allow_ro`, `paths.allow_rw`, `paths.deny_read`, and `paths.deny_write`, relative paths resolve from `$HOME`; trusted project paths resolve from its discovered root. CLI grant paths resolve from the effective workspace after `--worktree`; `~` resolves from `$HOME`. Explicit grants must exist and are canonicalized before sandbox setup. Unknown or legacy JSON fields are errors.
 
-Resolution happens exactly once after application discovery, worktree selection, secret discovery, and staging. Each hard-denial rule records its source, lexical directory entry, then-current canonical target (including a would-be target beneath a symlinked ancestor), existence, and captured file/directory kind. Adapters consume this immutable snapshot and enforce both distinct spellings; they do not re-run `canonicalize`, `exists`, or `is_dir` during launch.
+Resolution happens exactly once after application discovery, worktree selection, secret discovery, and staging. Each hard-denial rule records its source, lexical directory entry, then-current canonical target (including a would-be target beneath a symlinked ancestor), existence, and captured file/directory kind. The workspace, grants, and runtime roots also retain captured device/inode identity and kind so adapters select file-versus-directory enforcement without consulting live host state. Every filesystem-policy path must be valid UTF-8 because Seatbelt, VM plans, and launcher protocols are textual; an unrepresentable path fails before child launch rather than being converted lossily. This restriction does not apply to wrapped-command argv bytes. Immediately before adapter dispatch CDM fails if a captured identity changed. Adapters consume the immutable snapshot and enforce its exact spellings; they do not re-run `canonicalize`, `exists`, or `is_dir` during launch.
 
 On macOS, Seatbelt emits captured literal/subpath denials plus move-blocking `deny file-write-unlink` rules. On Linux, Bubblewrap overlays an inaccessible file or directory for read denials, a read-only bind for existing write denials, and a namespace-only read-only placeholder for a missing protected leaf; missing ancestors exist only in the new mount namespace. VM launcher and guest policy enforce captured existing paths at both boundaries. A missing protected leaf beneath a writable VM export is rejected before launch because creating its guest mount point through VirtioFS would mutate the host and could leave crash residue. CDM never creates persistent host placeholders for this purpose.
 
