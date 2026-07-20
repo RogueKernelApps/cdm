@@ -103,7 +103,7 @@ jobs:
           bwrap --ro-bind / / /usr/bin/true
       - run: cargo build --locked --release
       - name: Run exact native artifact
-        run: CDM_REQUIRE_NATIVE=1 CDM_SKIP_VM=1 CDM="$PWD/target/release/cdm" ./tests/integration.sh
+        run: CDM_TEST_CAPTURE_STDERR=1 CDM_REQUIRE_NATIVE=1 CDM_SKIP_VM=1 CDM="$PWD/target/release/cdm" ./tests/integration.sh
 
   native-macos:
     name: Native integration (macOS)

@@ -364,7 +364,10 @@ fn directory_mode(fd: &OwnedFd) -> io::Result<u32> {
     if unsafe { libc::fstat(fd.as_raw_fd(), metadata.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(u32::from(unsafe { metadata.assume_init() }.st_mode) & 0o7777)
+    let mode = unsafe { metadata.assume_init() }.st_mode;
+    #[cfg(target_os = "macos")]
+    let mode = u32::from(mode);
+    Ok(mode & 0o7777)
 }
 
 fn fchmod(fd: &OwnedFd, mode: u32) -> io::Result<()> {
