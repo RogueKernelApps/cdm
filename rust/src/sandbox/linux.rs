@@ -108,7 +108,7 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
         &access.deny_read_rules,
         &denied_nodes,
         &access.synthetic_dirs,
-        |path| path_is_exposed(path, access),
+        |path| access.exposes(path, &cfg.runtime_dir),
         &writable_paths,
     );
     let mountpoint_lock_root = cfg
@@ -295,45 +295,6 @@ fn append_hard_denials(
             .filter_map(Path::parent)
             .map(Path::to_path_buf),
     );
-    let pinned_existing_parents = active_rules
-        .iter()
-        .filter(|rule| {
-            rule.kind != crate::access::DeniedPathKind::Missing && rule.missing_parents.is_empty()
-        })
-        .flat_map(|rule| {
-            rule.paths()
-                .filter(|path| path_is_active(path))
-                .filter_map(Path::parent)
-                .map(Path::to_path_buf)
-        })
-        .collect::<BTreeSet<_>>();
-    let mut ancestor_writable_parents = Vec::new();
-    for parent in &pinned_existing_parents {
-        if path_is_writable(parent) {
-            add_bind(args, "--bind", parent);
-        } else if writable_paths
-            .iter()
-            .any(|writable| writable != parent && writable.starts_with(parent))
-        {
-            add_bind(args, "--bind", parent);
-            ancestor_writable_parents.push(parent.clone());
-        } else {
-            add_bind(args, "--ro-bind", parent);
-        }
-    }
-    ancestor_writable_parents.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
-    for parent in ancestor_writable_parents {
-        args.push("--remount-ro".to_string());
-        args.push(parent.to_string_lossy().into_owned());
-    }
-    for writable in writable_paths {
-        if pinned_existing_parents
-            .iter()
-            .any(|parent| writable != parent && writable.starts_with(parent))
-        {
-            add_bind(args, "--bind", writable);
-        }
-    }
     // Bubblewrap cannot create a mountpoint below a read-only bind. Make each
     // nearest existing parent writable only while missing mounts are assembled;
     // the child starts after the read-only remounts appended below.
@@ -408,15 +369,6 @@ fn append_hard_denials(
         }
     }
     mountpoints
-}
-
-fn path_is_exposed(path: &Path, access: &crate::access::ResolvedAccessPolicy) -> bool {
-    access.host == crate::access::HostAccess::Normal
-        || std::iter::once(&access.work_dir)
-            .chain(&access.runtime_ro)
-            .chain(&access.allow_ro)
-            .chain(&access.allow_rw)
-            .any(|root| path == root || path.starts_with(root))
 }
 
 fn path_is_covered_by_synthetic_dir(path: &Path, synthetic_dirs: &[std::path::PathBuf]) -> bool {

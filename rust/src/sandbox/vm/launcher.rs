@@ -453,7 +453,7 @@ pub(super) fn build_linux_launcher_arguments(
             continue;
         }
         for path in rule.paths() {
-            if access.host == HostAccess::Normal || path_is_exposed(path, access) {
+            if access.exposes(path, &cfg.runtime_dir) {
                 push_bwrap_bind(&mut args, "--ro-bind", path, path);
             }
         }
@@ -463,7 +463,7 @@ pub(super) fn build_linux_launcher_arguments(
             continue;
         }
         for path in rule.paths() {
-            if access.host != HostAccess::Normal && !path_is_exposed(path, access) {
+            if !access.exposes(path, &cfg.runtime_dir) {
                 continue;
             }
             if rule.kind == crate::access::DeniedPathKind::Directory {

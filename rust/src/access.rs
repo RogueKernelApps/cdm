@@ -120,6 +120,17 @@ pub struct ResolvedDenyRule {
 }
 
 impl ResolvedAccessPolicy {
+    #[cfg(target_os = "linux")]
+    pub fn exposes(&self, path: &Path, runtime_dir: &Path) -> bool {
+        self.host == HostAccess::Normal
+            || std::iter::once(self.work_dir.as_path())
+                .chain(std::iter::once(runtime_dir))
+                .chain(self.runtime_ro.iter().map(PathBuf::as_path))
+                .chain(self.allow_ro.iter().map(PathBuf::as_path))
+                .chain(self.allow_rw.iter().map(PathBuf::as_path))
+                .any(|root| path == root || path.starts_with(root))
+    }
+
     #[cfg_attr(not(any(feature = "vm", test)), allow(dead_code))]
     pub fn kind(&self, path: &Path) -> Option<DeniedPathKind> {
         self.path_kinds.get(path).copied()

@@ -125,7 +125,7 @@ fn directory_read_denial_uses_an_inaccessible_directory_overlay() {
 }
 
 #[test]
-fn existing_writable_parent_is_pinned_before_its_denied_leaf() {
+fn existing_writable_parent_is_not_rebound_over_earlier_mounts() {
     let mut args = Vec::new();
     let _mountpoints = append_hard_denials(
         &mut args,
@@ -140,19 +140,19 @@ fn existing_writable_parent_is_pinned_before_its_denied_leaf() {
         |_| true,
         &[std::path::PathBuf::from("/workspace")],
     );
-    let parent = args
-        .windows(3)
-        .position(|triple| triple == ["--bind", "/workspace", "/workspace"])
-        .unwrap();
     let leaf = args
         .windows(3)
         .position(|triple| triple == ["--ro-bind", "/workspace/protected", "/workspace/protected"])
         .unwrap();
-    assert!(parent < leaf);
+    assert_eq!(leaf, 0);
+    assert!(!args.windows(3).any(|triple| {
+        triple == ["--bind", "/workspace", "/workspace"]
+            || triple == ["--ro-bind", "/workspace", "/workspace"]
+    }));
 }
 
 #[test]
-fn existing_read_only_parent_with_writable_descendant_is_remounted_before_its_denied_leaf() {
+fn existing_read_only_parent_is_not_rebound_over_writable_descendant_mounts() {
     let mut args = Vec::new();
     let _mountpoints = append_hard_denials(
         &mut args,
@@ -167,20 +167,17 @@ fn existing_read_only_parent_with_writable_descendant_is_remounted_before_its_de
         |_| true,
         &[std::path::PathBuf::from("/host/writable")],
     );
-    let parent = args
-        .windows(3)
-        .position(|triple| triple == ["--bind", "/host", "/host"])
-        .unwrap();
     let leaf = args
         .windows(3)
         .position(|triple| triple == ["--ro-bind", "/host/protected", "/host/protected"])
         .unwrap();
-    let protected_parent = args
+    assert_eq!(leaf, 0);
+    assert!(!args.windows(3).any(|triple| {
+        triple == ["--bind", "/host", "/host"] || triple == ["--ro-bind", "/host", "/host"]
+    }));
+    assert!(!args
         .windows(2)
-        .position(|pair| pair == ["--remount-ro", "/host"])
-        .unwrap();
-    assert!(parent < protected_parent);
-    assert!(protected_parent < leaf);
+        .any(|pair| pair == ["--remount-ro", "/host"]));
 }
 
 #[test]
