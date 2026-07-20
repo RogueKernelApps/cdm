@@ -348,7 +348,10 @@ impl AccessPolicy {
         if let Some(executable) = resolve_executable(command.first().map(OsString::as_os_str)) {
             runtime_ro.push(executable);
         }
-        normalize_existing_paths(&mut runtime_ro);
+        // Keep lexical loader paths such as /lib64. Canonicalizing these
+        // symlinks removes the pathname embedded in dynamically linked ELF
+        // executables from an isolated root.
+        dedup_paths(&mut runtime_ro);
         let mut synthetic_dirs = synthetic_host_dirs();
         #[cfg(target_os = "linux")]
         if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
@@ -836,7 +839,11 @@ fn runtime_roots() -> Vec<PathBuf> {
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let candidates: [&str; 0] = [];
 
-    candidates.iter().map(PathBuf::from).collect()
+    candidates
+        .iter()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .collect()
 }
 
 fn synthetic_host_dirs() -> Vec<PathBuf> {

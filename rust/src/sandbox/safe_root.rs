@@ -364,7 +364,7 @@ fn directory_mode(fd: &OwnedFd) -> io::Result<u32> {
     if unsafe { libc::fstat(fd.as_raw_fd(), metadata.as_mut_ptr()) } != 0 {
         return Err(io::Error::last_os_error());
     }
-    Ok(unsafe { metadata.assume_init() }.st_mode as u32 & 0o7777)
+    Ok(u32::from(unsafe { metadata.assume_init() }.st_mode) & 0o7777)
 }
 
 fn fchmod(fd: &OwnedFd, mode: u32) -> io::Result<()> {

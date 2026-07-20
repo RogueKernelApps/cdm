@@ -398,6 +398,28 @@ fn linux_host_runtime_socket_tree_is_synthetic_not_readable() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn linux_runtime_roots_only_include_existing_paths() {
+    assert!(runtime_roots().iter().all(|path| path.exists()));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_runtime_roots_preserve_loader_symlink_paths() {
+    let (work, home) = fixture();
+    let resolved = AccessPolicy::new(&PathsConfig::default())
+        .resolve(&work, &home, &[], &[std::ffi::OsString::from("true")])
+        .unwrap();
+
+    for path in ["/bin", "/lib", "/lib64"] {
+        if Path::new(path).exists() {
+            assert!(resolved.runtime_ro.contains(&PathBuf::from(path)));
+        }
+    }
+    let _ = std::fs::remove_dir_all(work.parent().unwrap());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn direct_unix_socket_grant_is_rejected() {
     use std::os::unix::net::UnixListener;
 
