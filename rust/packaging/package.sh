@@ -348,8 +348,10 @@ PY
 }
 
 codesign_with_retry() {
-    local attempt=1
-    while ! codesign "$@"; do
+    local attempt=1 codesign_home=${CDM_CODESIGN_HOME:-$HOME}
+    [[ "$codesign_home" == /* && -d "$codesign_home" ]] \
+        || fail "CDM_CODESIGN_HOME is not an absolute directory"
+    while ! HOME="$codesign_home" codesign "$@"; do
         (( attempt >= 3 )) && return 1
         printf 'cdm package: codesign attempt %d failed; retrying secure timestamp\n' \
             "$attempt" >&2

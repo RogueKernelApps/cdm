@@ -273,7 +273,10 @@ It suppresses certificate labels in public action logs and does not depend on th
 runner user's login keychain or a separate identity-name secret. Both the probe
 and package signer pass that disposable keychain explicitly through
 `CDM_CODESIGN_KEYCHAIN`, so signing does not depend on per-user keychain search
-preferences.
+preferences. The self-hosted runner keeps a neutral service `HOME` for public log
+paths, but `codesign` receives the macOS account home through
+`CDM_CODESIGN_HOME`; Apple's signing service otherwise cannot resolve even an
+identity from an explicitly selected keychain.
 
 To require Apple notarization, store credentials on the runner with
 `xcrun notarytool store-credentials`, then add the optional

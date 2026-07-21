@@ -158,8 +158,13 @@ jobs:
           security unlock-keychain \
             -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
             "$CDM_SIGNING_KEYCHAIN"
+          codesign_home=$(
+            dscl . -read "/Users/$(id -un)" NFSHomeDirectory \
+              | awk '{ print $2 }'
+          )
+          [[ "$codesign_home" == /* && -d "$codesign_home" ]]
           cp /usr/bin/true "$probe"
-          codesign --force --timestamp \
+          HOME="$codesign_home" codesign --force --timestamp \
             --keychain "$CDM_CODESIGN_KEYCHAIN" \
             --sign "$CDM_CODESIGN_IDENTITY" \
             "$probe"
@@ -174,7 +179,16 @@ jobs:
         run: |
           source packaging/versions.env
           export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-$ALPINE_VERSION"
-          ./packaging/package.sh release
+          if [[ "$(uname -s)" == Darwin ]]; then
+            codesign_home=$(
+              dscl . -read "/Users/$(id -un)" NFSHomeDirectory \
+                | awk '{ print $2 }'
+            )
+            [[ "$codesign_home" == /* && -d "$codesign_home" ]]
+            CDM_CODESIGN_HOME="$codesign_home" ./packaging/package.sh release
+          else
+            ./packaging/package.sh release
+          fi
       - name: Verify release set
         env:
           EXPECTED_TARGET: ${{ matrix.target }}
