@@ -1,6 +1,6 @@
 # CDM — Specification
 
-Version: 0.1.1
+Version: 0.1.2
 
 Updated 21 July 2026. `ARCHITECTURE.md` defines the component and trust model; this file defines expected behavior.
 

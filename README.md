@@ -12,12 +12,37 @@ and restore real values only through a per-invocation HTTP(S) proxy.
 > writes outside a project, but it is not an appropriate boundary for hostile
 > code. Use the hardening flags below when the command is not trusted.
 
+## Install
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
+```
+
+The installer detects macOS Apple silicon, Linux x86_64, or Linux ARM64,
+downloads the matching runtime, verifies it against the release's
+`SHA256SUMS`, and installs it under `$HOME/.local`. Ensure `$HOME/.local/bin` is
+on `PATH`. Set `CDM_INSTALL_PREFIX` to choose another prefix or
+`CDM_INSTALL_VERSION` to pin a release.
+
+To install manually, open the [latest release](https://github.com/RogueKernelApps/cdm/releases/latest)
+and download exactly one runtime archive:
+
+| System | Runtime asset |
+|---|---|
+| macOS 14+ on Apple silicon | `cdm-<version>-macos-arm64.tar.gz` |
+| Linux x86_64 | `cdm-<version>-linux-x86_64.tar.gz` |
+| Linux ARM64 | `cdm-<version>-linux-arm64.tar.gz` |
+
+Extract it and run the included `install.sh`. The `source` archives satisfy
+the bundled VM firmware's corresponding-source license requirements; users do
+not need them to install or run CDM. `SHA256SUMS` supports download verification,
+and the verification archive contains optional provenance and Sigstore evidence.
+
 ## Quick start
 
 ```bash
-cd rust
-cargo build --release
-./target/release/cdm npm test
+cdm npm test
 ```
 
 CDM preserves argument boundaries exactly; it never joins or reparses argv.

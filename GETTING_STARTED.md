@@ -8,13 +8,43 @@
 
 ## Prerequisites
 
-- Rust 1.88 or newer.
-- macOS native mode: the built-in `/usr/bin/sandbox-exec`.
-- Linux native mode: Bubblewrap (`bwrap`).
-- Optional compile-only VM feature check: libkrun 1.19 or newer on the build host.
-- Self-contained VM releases: macOS 14+ on Apple silicon, or Linux on x86_64/AArch64.
+- A supported release host: macOS 14+ on Apple silicon, Linux x86_64, or Linux ARM64.
+- `curl` and `tar` for the release installer.
+- Linux native mode: Bubblewrap (`bwrap`). The bundled microVM mode additionally
+  requires access to KVM.
 
-## Build and test
+## Install a release
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
+```
+
+The installer selects `macos-arm64`, `linux-x86_64`, or `linux-arm64`, verifies
+the runtime with the release's `SHA256SUMS`, and delegates to the package's
+transactional installer. It defaults to `$HOME/.local`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh \
+  | CDM_INSTALL_PREFIX="$HOME/tools" bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh \
+  | CDM_INSTALL_VERSION=v0.1.2 bash
+```
+
+For a manual installation, download the one `cdm-<version>-<os>-<arch>.tar.gz`
+runtime matching your system from the
+[latest release](https://github.com/RogueKernelApps/cdm/releases/latest), extract
+it, and run its `install.sh`. Corresponding-source archives are published to
+satisfy bundled firmware licenses and are not needed for installation. Optional
+provenance and Sigstore records are grouped in the verification archive.
+
+## Build and test from source
+
+Building from source requires Rust 1.88 or newer. A compile-only VM feature
+check additionally requires libkrun 1.19 or newer on the build host.
 
 ```bash
 cd rust

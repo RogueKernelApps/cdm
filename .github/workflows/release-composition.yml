@@ -490,83 +490,22 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download accepted release outputs
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
           path: release-artifacts
       - name: Assemble and verify release assets
-        env:
-          RELEASE_VERSION: ${{ github.ref_name }}
         run: |
-          python3 - <<'PY'
-          import os
-          import pathlib
-          import shutil
-
-          version = os.environ["RELEASE_VERSION"].removeprefix("v")
-          root = pathlib.Path("release-artifacts")
-          destination = pathlib.Path("publish-assets")
-          destination.mkdir()
-          targets = (
-              "aarch64-apple-darwin",
-              "x86_64-unknown-linux-gnu",
-              "aarch64-unknown-linux-gnu",
-          )
-          top_level_files = [
-              path
-              for artifact in root.iterdir()
-              if artifact.is_dir()
-              for path in artifact.iterdir()
-              if path.is_file()
-          ]
-          selected = []
-          for target in targets:
-              runtime = f"cdm-{version}-{target}.tar.gz"
-              provenance = f"cdm-{version}-{target}.provenance.intoto.json"
-              sigstore = f"cdm-{version}-{target}.sigstore.jsonl"
-              source_matches = [
-                  path.name
-                  for path in top_level_files
-                  if path.name.startswith("cdm-vm-sources-")
-                  and path.name.endswith(f"-{target}.tar.gz")
-              ]
-              if len(source_matches) != 1:
-                  raise SystemExit(f"expected one source archive for {target}: {source_matches}")
-              for name in (runtime, provenance, source_matches[0]):
-                  matches = [path for path in top_level_files if path.name == name]
-                  checksum_matches = [
-                      path for path in top_level_files if path.name == f"{name}.sha256"
-                  ]
-                  if len(matches) != 1 or len(checksum_matches) != 1:
-                      raise SystemExit(f"incomplete or duplicate release asset: {name}")
-                  selected.extend((matches[0], checksum_matches[0]))
-              signature_matches = [
-                  path for path in top_level_files if path.name == sigstore
-              ]
-              if len(signature_matches) != 1:
-                  raise SystemExit(f"missing or duplicate Sigstore bundle: {sigstore}")
-              selected.extend(signature_matches)
-              notarization = [
-                  path for path in top_level_files
-                  if path.name == f"{runtime}.notarization.json"
-              ]
-              if len(notarization) > 1:
-                  raise SystemExit(f"duplicate notarization response for {target}")
-              selected.extend(notarization)
-          if len(selected) not in (21, 22):
-              raise SystemExit(f"expected 21 or 22 release files, found {len(selected)}")
-          for source in selected:
-              target = destination / source.name
-              if target.exists():
-                  raise SystemExit(f"duplicate release filename: {source.name}")
-              shutil.copy2(source, target)
-          PY
+          python3 rust/packaging/assemble-release.py \
+            --version "$GITHUB_REF_NAME" \
+            --artifacts release-artifacts \
+            --installer install.sh \
+            --output publish-assets
           (
             cd publish-assets
-            for checksum in *.sha256; do
-              sha256sum -c "$checksum"
-            done
+            sha256sum -c SHA256SUMS
           )
       - name: Create draft release
         env:
@@ -575,8 +514,25 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
           else
+            release_notes=$(cat <<'EOF'
+          ## Install
+
+          ```bash
+          curl --proto '=https' --tlsv1.2 -fsSL https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
+          ```
+
+          This installs the correct runtime for macOS Apple silicon, Linux x86_64,
+          or Linux ARM64 under `$HOME/.local` and verifies it against `SHA256SUMS`.
+
+          For a manual install, download the single `cdm-<version>-<os>-<arch>.tar.gz`
+          file matching your system. Files beginning with `cdm-<version>-source-`
+          satisfy corresponding-source license requirements and are not needed to
+          install or run CDM. Optional provenance and Sigstore evidence is collected
+          in the verification archive.
+          EOF
+          )
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
-              --title "CDM $GITHUB_REF_NAME"
+              --notes "$release_notes" --title "CDM $GITHUB_REF_NAME"
           fi
       - name: Upload release assets
         env:

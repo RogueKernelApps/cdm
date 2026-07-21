@@ -42,6 +42,7 @@ python3 -m json.tool "$packaging_dir/../assets/alpine-rootfs.lock.json" >/dev/nu
     || fail "invalid Alpine rootfs manifest"
 
 bash -n "$packaging_dir/package.sh"
+bash -n "$packaging_dir/../../install.sh"
 bash -n "$packaging_dir/guest-init.sh"
 grep -Fq 'RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.90.0}' "$packaging_dir/guest-init.sh" \
     || fail "guest-init packaging must use the pinned Rust toolchain exactly"
@@ -53,6 +54,8 @@ python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __
     "$packaging_dir/create-archive.py"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
     "$packaging_dir/generate-provenance.py"
+python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
+    "$packaging_dir/assemble-release.py"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
     "$packaging_dir/verify-runtime.py"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
@@ -548,6 +551,115 @@ assert definition["internalParameters"]["evidenceDigests"] == {
     "SBOM.spdx.json": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 }
 PY
+
+release_fixture="$archive_fixture/release-assets"
+mkdir -p "$release_fixture/input" "$release_fixture/output-one" "$release_fixture/output-two"
+for entry in \
+    'release-macos-aarch64 aarch64-apple-darwin' \
+    'release-linux-x86_64 x86_64-unknown-linux-gnu' \
+    'release-linux-aarch64 aarch64-unknown-linux-gnu'; do
+    read -r artifact target <<<"$entry"
+    artifact_dir="$release_fixture/input/$artifact"
+    runtime="cdm-9.8.7-$target.tar.gz"
+    provenance="cdm-9.8.7-$target.provenance.intoto.json"
+    source="cdm-vm-sources-libkrun-1.19.4-libkrunfw-5.5.0-$target.tar.gz"
+    mkdir -p "$artifact_dir"
+    printf 'runtime-%s\n' "$target" > "$artifact_dir/$runtime"
+    printf '{"target":"%s"}\n' "$target" > "$artifact_dir/$provenance"
+    printf '{"bundle":"%s"}\n' "$target" > \
+        "$artifact_dir/cdm-9.8.7-$target.sigstore.jsonl"
+    printf 'source-%s\n' "$target" > "$artifact_dir/$source"
+    for file in "$runtime" "$provenance" "$source"; do
+        printf '%s  %s\n' "$(sha256 "$artifact_dir/$file")" "$file" > \
+            "$artifact_dir/$file.sha256"
+    done
+done
+for output in output-one output-two; do
+    command -p rm -rf -- "$release_fixture/$output"
+    python3 "$packaging_dir/assemble-release.py" \
+        --version v9.8.7 \
+        --artifacts "$release_fixture/input" \
+        --installer "$packaging_dir/../../install.sh" \
+        --output "$release_fixture/$output"
+done
+python3 - "$release_fixture/output-one" "$release_fixture/output-two" <<'PY'
+import hashlib
+import pathlib
+import tarfile
+import sys
+
+first, second = map(pathlib.Path, sys.argv[1:])
+expected = {
+    "SHA256SUMS",
+    "cdm-install.sh",
+    "cdm-9.8.7-linux-arm64.tar.gz",
+    "cdm-9.8.7-linux-x86_64.tar.gz",
+    "cdm-9.8.7-macos-arm64.tar.gz",
+    "cdm-9.8.7-source-linux-arm64.tar.gz",
+    "cdm-9.8.7-source-linux-x86_64.tar.gz",
+    "cdm-9.8.7-source-macos-arm64.tar.gz",
+    "cdm-9.8.7-verification.tar.gz",
+}
+assert {path.name for path in first.iterdir()} == expected
+assert not any("unknown" in name for name in expected)
+checksums = {}
+for line in (first / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
+    digest, name = line.split("  ", 1)
+    checksums[name] = digest
+assert set(checksums) == expected - {"SHA256SUMS"}
+for name, digest in checksums.items():
+    assert hashlib.sha256((first / name).read_bytes()).hexdigest() == digest
+verification = first / "cdm-9.8.7-verification.tar.gz"
+with tarfile.open(verification, "r:gz") as archive:
+    names = archive.getnames()
+assert any(name.endswith("/README.md") for name in names)
+assert sum(name.endswith(".sigstore.jsonl") for name in names) == 3
+assert sum(name.endswith(".provenance.intoto.json") for name in names) == 3
+assert verification.read_bytes() == (second / verification.name).read_bytes()
+PY
+
+test_release_installer() (
+    local root package archive prefix marker
+    root="$archive_fixture/release-installer"
+    package="$root/cdm-9.8.7-x86_64-unknown-linux-gnu"
+    archive="$root/cdm-9.8.7-linux-x86_64.tar.gz"
+    prefix="$root/prefix"
+    marker="$root/installed-prefix"
+    mkdir -p "$package"
+    cat > "$package/install.sh" <<EOF
+#!/bin/bash
+printf '%s' "\$2" > "$marker"
+EOF
+    chmod 755 "$package/install.sh"
+    tar -czf "$archive" -C "$root" "${package##*/}"
+    printf '%s  %s\n' "$(sha256 "$archive")" "${archive##*/}" > "$root/SHA256SUMS"
+
+    CDM_INSTALL_TEST_LIBRARY=1 source "$packaging_dir/../../install.sh"
+    detect_platform Darwin arm64
+    [[ "$platform:$target" == macos-arm64:aarch64-apple-darwin ]] \
+        || fail "release installer mapped macOS ARM64 incorrectly"
+    detect_platform Linux x86_64
+    [[ "$platform:$target" == linux-x86_64:x86_64-unknown-linux-gnu ]] \
+        || fail "release installer mapped Linux x86_64 incorrectly"
+    detect_platform Linux aarch64
+    [[ "$platform:$target" == linux-arm64:aarch64-unknown-linux-gnu ]] \
+        || fail "release installer mapped Linux ARM64 incorrectly"
+    detect_platform() {
+        platform=linux-x86_64
+        target=x86_64-unknown-linux-gnu
+    }
+    resolve_version() {
+        tag=v9.8.7
+        version=9.8.7
+    }
+    download() {
+        cp "$root/${1##*/}" "$2"
+    }
+    main "$prefix"
+    [[ "$(cat "$marker")" == "$prefix" ]] \
+        || fail "release installer did not dispatch the verified package installer"
+)
+test_release_installer
 
 if [[ "$(uname -s)" == Darwin ]]; then
     if CDM_CODESIGN_IDENTITY=- "$packaging_dir/package.sh" release \

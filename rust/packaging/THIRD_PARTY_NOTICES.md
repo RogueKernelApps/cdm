@@ -23,7 +23,11 @@ attribution are in the inventory. The canonical texts are pinned to SPDX License
 List 3.28.0. The package build verifies both their committed checksums and the
 generated legal bundle before publication.
 
-The corresponding `cdm-vm-sources-*.tar.gz` archive distributed beside the runtime package contains the exact libkrun, libkrunfw, Linux kernel, and Alpine package sources used for the build. Do not redistribute the runtime archive without its matching source archive. See the license files under `share/licenses/` and the source archive's `MANIFEST.txt`.
+The matching `cdm-<version>-source-<platform>.tar.gz` release asset distributed
+beside the runtime package contains the exact libkrun, libkrunfw, Linux kernel,
+and Alpine package sources used for the build. Do not redistribute the runtime
+archive without its matching source archive. See the license files under
+`share/licenses/` and the source archive's `MANIFEST.txt`.
 
 Upstream projects:
 

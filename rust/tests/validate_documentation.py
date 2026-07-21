@@ -28,6 +28,7 @@ REQUIRED_FILES = (
     "rust/tests/README.md",
     "rust/packaging/AGENTS.md",
     "rust/packaging/README.md",
+    "install.sh",
 )
 
 PUBLIC_FLAGS = (
@@ -230,11 +231,23 @@ def main() -> int:
         'CDM_CERTIFICATE_P12',
         "create-storage-record: ${{ github.repository_visibility == 'public' }}",
         'Preserve Sigstore attestation bundle',
+        'python3 rust/packaging/assemble-release.py',
+        '--installer install.sh',
+        'sha256sum -c SHA256SUMS',
+        'releases/latest/download/cdm-install.sh',
     )
     for marker in release_publication_markers:
         if marker not in release_workflow:
             errors.append(
                 f"production release workflow missing tag publication marker: {marker}"
+            )
+
+    install_url = "https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh"
+    for install_guide in (ROOT / "README.md", ROOT / "GETTING_STARTED.md"):
+        guide = install_guide.read_text(encoding="utf-8")
+        if install_url not in guide or "SHA256SUMS" not in guide:
+            errors.append(
+                f"{install_guide.relative_to(ROOT)}: missing verified release installation guidance"
             )
 
     test_index = (RUST / "tests/README.md").read_text(encoding="utf-8")

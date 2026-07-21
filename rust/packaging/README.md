@@ -12,6 +12,20 @@
 
 Native-only CDM is not restricted to this VM matrix. libkrun supports macOS VM execution only on Apple silicon, so the packager rejects macOS x86_64 rather than producing a misleading artifact. Each architecture gets its own archive; these are not universal binaries.
 
+GitHub Releases expose concise platform names rather than Rust target triples:
+
+| Target | Public runtime |
+|---|---|
+| `aarch64-apple-darwin` | `cdm-<version>-macos-arm64.tar.gz` |
+| `x86_64-unknown-linux-gnu` | `cdm-<version>-linux-x86_64.tar.gz` |
+| `aarch64-unknown-linux-gnu` | `cdm-<version>-linux-arm64.tar.gz` |
+
+The publish job also emits one `SHA256SUMS`, `cdm-install.sh`, three clearly
+labelled `cdm-<version>-source-<platform>.tar.gz` corresponding-source archives,
+and one verification archive containing provenance, Sigstore bundles, and any
+notarization response. Thus the public release has nine project assets instead
+of exposing target-triple build intermediates individually.
+
 The production GitHub Actions workflow builds each target on its matching host
 architecture and requires package verification, relocation, installation, a real
 VM boot, and the credential-free integration suite before publication.
@@ -25,8 +39,8 @@ export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.7"
 ./packaging/package.sh release  # runtime and verified corresponding source
 ./packaging/package.sh runtime  # local validation only; do not redistribute alone
 ./packaging/package.sh sources  # incomplete unless CDM_ALPINE_SOURCE_DIR is set
-./packaging/package.sh verify-runtime target/dist/cdm-0.1.1-aarch64-apple-darwin aarch64-apple-darwin
-./packaging/package.sh verify target/dist/cdm-0.1.1-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
+./packaging/package.sh verify-runtime target/dist/cdm-0.1.2-aarch64-apple-darwin aarch64-apple-darwin
+./packaging/package.sh verify target/dist/cdm-0.1.2-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
 ```
 
 The output and adjacent `.sha256` files are under `target/dist/`. Downloads and upstream builds are cached under `target/package-work/` and remain ignored by Git.
@@ -102,7 +116,10 @@ cdm-<version>-<target>/
 
 macOS install names are rewritten to `@rpath`; absolute development rpaths are removed. Libraries are signed first, then CDM is signed with `com.apple.security.hypervisor`. `package.sh` verifies the signatures and runtime paths before creating the archive.
 
-The separately emitted `cdm-vm-sources-*.tar.gz` contains the exact checksum-pinned libkrun, libkrunfw, Linux kernel, and verified Alpine package sources. Publish it beside every runtime archive.
+The separately emitted build output `cdm-vm-sources-*.tar.gz` contains the exact
+checksum-pinned libkrun, libkrunfw, Linux kernel, and verified Alpine package
+sources. The publish step exposes the same bytes as the matching, user-facing
+`cdm-<version>-source-<platform>.tar.gz` asset beside every runtime archive.
 
 It also carries the exact embedded Alpine binary rootfs archives and their generated
 schema-2 inventory. That inventory records installed packages, source-package
@@ -186,9 +203,12 @@ The provenance file is an attestation payload, not by itself a signature. The
 production workflow passes the archives, provenance, and checksums to the pinned
 `actions/attest` action after target-native acceptance. GitHub uses a short-lived
 OIDC-backed Sigstore certificate, so this step needs workflow permissions rather
-than a long-lived signing secret. Each target publishes a
-`cdm-<version>-<target>.sigstore.jsonl` bundle beside its artifacts. Consumers can
-verify an archive directly with, for example:
+than a long-lived signing secret. Each target produces a
+`cdm-<version>-<target>.sigstore.jsonl` bundle. Public releases group those
+bundles and the provenance documents into `cdm-<version>-verification.tar.gz`,
+whose README maps each concise public name to its attested target-triple build
+name. Consumers can verify an extracted bundle against the byte-identical
+runtime archive with, for example:
 
 ```bash
 gh attestation verify cdm-<version>-<target>.tar.gz \
@@ -213,11 +233,12 @@ attested and uploaded.
 A manual workflow run stops after uploading the accepted Actions artifacts. A tag
 push matching `v*` additionally verifies that the tag is exactly `v` plus the
 version in `rust/Cargo.toml`. After all three target jobs succeed, the workflow
-creates a draft GitHub Release, verifies and uploads the complete runtime,
-corresponding-source, provenance, checksum, and optional notarization-response
-asset set plus each target's Sigstore bundle, and publishes the release. A failed target
-therefore cannot produce a partial public release. Release binaries are generated
-artifacts and must not be committed to Git.
+creates a draft GitHub Release, maps accepted outputs to concise platform names,
+builds the aggregate checksum and verification files, uploads the nine complete
+public assets, and publishes the release. The release notes identify the three
+runtime downloads and explain that corresponding source is not needed to install.
+A failed target therefore cannot produce a partial public release. Release binaries
+are generated artifacts and must not be committed to Git.
 
 ### GitHub release setup
 
@@ -305,6 +326,18 @@ tagged `v0.2.0`. The tag workflow performs all builds, signing, verification,
 attestation, and publication; maintainers do not build or commit release binaries.
 
 ## Install lifecycle
+
+End users can download, checksum, and dispatch the correct package installer in
+one step:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
+```
+
+The release bootstrap defaults to `$HOME/.local`, supports
+`CDM_INSTALL_PREFIX` and `CDM_INSTALL_VERSION`, and never installs a runtime until
+its friendly-named archive matches the release's aggregate `SHA256SUMS`.
 
 The bundled installer owns only `bin/cdm`, the runtime libraries it records, and
 `lib/cdm/install-manifest.sha256` under the selected prefix. The manifest records
