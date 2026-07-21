@@ -62,6 +62,25 @@ assert_secret_prelaunch_failure "malformed .env" "$MALFORMED_WORK" "$MALFORMED_S
 
 remove_test_path "$SECRET_FAILURE_ROOT"
 
+section "Credential directory sockets"
+
+SOCKET_HOME=$(mktemp -d "/tmp/cdm-ssh-home.XXXXXX")
+chmod 700 "$SOCKET_HOME"
+mkdir -p "$SOCKET_HOME/.ssh"
+chmod 700 "$SOCKET_HOME/.ssh"
+python3 - "$SOCKET_HOME/.ssh/control.sock" <<'PY'
+import socket
+import sys
+
+with socket.socket(socket.AF_UNIX) as listener:
+    listener.bind(sys.argv[1])
+PY
+SOCKET_STATUS=0
+(cd "$FIXTURE" && HOME="$SOCKET_HOME" "$CDM" --scramble --no-network -- true \
+    >/dev/null 2>&1) || SOCKET_STATUS=$?
+check_eq "SSH sockets do not block secret preparation" "$SOCKET_STATUS" "0"
+remove_test_path "$SOCKET_HOME"
+
 section "Environment Sanity (cross-mode)"
 
 cross_check 'echo $CDM' "1" "CDM marker set"

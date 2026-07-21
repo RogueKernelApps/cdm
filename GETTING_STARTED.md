@@ -31,7 +31,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   | CDM_INSTALL_PREFIX="$HOME/tools" bash
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh \
-  | CDM_INSTALL_VERSION=v0.1.2 bash
+  | CDM_INSTALL_VERSION=v0.1.3 bash
 ```
 
 For a manual installation, download the one `cdm-<version>-<os>-<arch>.tar.gz`

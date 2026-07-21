@@ -96,6 +96,12 @@ impl AnchoredRoot {
             if kind == libc::S_IFDIR {
                 continue;
             }
+            // Credential directories commonly contain SSH agent or control
+            // sockets. They have no file content to inspect and must not make
+            // regular-file discovery unusable.
+            if kind == libc::S_IFSOCK {
+                continue;
+            }
             if kind != libc::S_IFREG {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,

@@ -1,6 +1,6 @@
 # CDM — Specification
 
-Version: 0.1.2
+Version: 0.1.3
 
 Updated 21 July 2026. `ARCHITECTURE.md` defines the component and trust model; this file defines expected behavior.
 
@@ -219,8 +219,10 @@ leaf symlink, concurrent replacement, unreadable entry, decode error, parse erro
 random-generation failure, or staging failure stops preparation before the child
 or proxy-facing workload launches. Diagnostics identify the operation and path
 without including file contents or secret values. SSH directory traversal follows
-the same descriptor-relative rule; an absent directory is optional, but an
-existing unsafe or malformed entry is an error.
+the same descriptor-relative rule. An absent directory is optional, regular files
+are inspected, subdirectories and Unix sockets are ignored, and any other unsafe
+or malformed entry is an error. Unix sockets are expected for SSH agents and
+multiplexed control connections and contain no regular-file data to inspect.
 Configured candidate names must be non-empty relative paths without `..`; they
 cannot escape the workspace or home base used for their category.
 

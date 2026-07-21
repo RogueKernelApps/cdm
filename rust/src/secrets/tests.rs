@@ -464,6 +464,36 @@ fn host_scan_ignores_absent_optional_candidates() {
 
 #[cfg(unix)]
 #[test]
+fn host_scan_ignores_ssh_sockets_while_scanning_private_keys() {
+    use std::os::unix::net::UnixListener;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::path::PathBuf::from("/tmp")
+        .join(format!("cdm-ssh-socket-{}-{nonce}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let home = dir.join("home");
+    let work = dir.join("work");
+    let ssh = home.join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    fs::create_dir(&work).unwrap();
+    let key =
+        "-----BEGIN PRIVATE KEY-----\nsynthetic-private-key-material\n-----END PRIVATE KEY-----\n";
+    fs::write(ssh.join("id_test"), key).unwrap();
+    let listener = UnixListener::bind(ssh.join("agent.sock")).unwrap();
+
+    let mapping = scan_host(&home, &work, &CdmConfig::default(), &|_| true).unwrap();
+    assert_ne!(mapping.obfuscate(key), key);
+
+    drop(listener);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn host_scan_rejects_secret_files_beneath_symlinked_ancestors() {
     use std::os::unix::fs::symlink;
 
