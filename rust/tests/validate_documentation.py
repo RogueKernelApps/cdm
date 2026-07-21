@@ -217,10 +217,13 @@ def main() -> int:
         'runner: \'"ubuntu-22.04"\'',
         'runner: \'"ubuntu-22.04-arm"\'',
         'Install Linux release build dependencies',
+        '            bubblewrap \\',
         'targets: ${{ matrix.guest_target }}',
         'Verify macOS signing access',
         'Prepare ephemeral macOS signing keychain',
         'CDM_CERTIFICATE_P12',
+        "create-storage-record: ${{ github.repository_visibility == 'public' }}",
+        'Preserve Sigstore attestation bundle',
     )
     for marker in release_publication_markers:
         if marker not in release_workflow:

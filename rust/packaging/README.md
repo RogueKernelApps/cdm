@@ -186,10 +186,22 @@ The provenance file is an attestation payload, not by itself a signature. The
 production workflow passes the archives, provenance, and checksums to the pinned
 `actions/attest` action after target-native acceptance. GitHub uses a short-lived
 OIDC-backed Sigstore certificate, so this step needs workflow permissions rather
-than a long-lived signing secret. Consumers can verify the result with
-`gh attestation verify` against the release repository. GitHub supports this for
-public repositories on current plans and for private/internal repositories on
-GitHub Enterprise Cloud.
+than a long-lived signing secret. Each target publishes a
+`cdm-<version>-<target>.sigstore.jsonl` bundle beside its artifacts. Consumers can
+verify an archive directly with, for example:
+
+```bash
+gh attestation verify cdm-<version>-<target>.tar.gz \
+  --repo RogueKernel/cdm \
+  --bundle cdm-<version>-<target>.sigstore.jsonl \
+  --signer-workflow RogueKernel/cdm/.github/workflows/release-composition.yml
+```
+
+Public repositories additionally persist the attestation in GitHub's API, where
+the bundle flag is optional. GitHub does not provide that storage API for a
+user-owned private repository, so the production workflow disables only the
+storage record in that state; OIDC signing and the downloadable bundle remain
+mandatory.
 
 The **Production release composition** workflow runs the metadata tests, acquires
 and verifies Alpine corresponding source, composes the complete release, checks
@@ -203,7 +215,7 @@ push matching `v*` additionally verifies that the tag is exactly `v` plus the
 version in `rust/Cargo.toml`. After all three target jobs succeed, the workflow
 creates a draft GitHub Release, verifies and uploads the complete runtime,
 corresponding-source, provenance, checksum, and optional notarization-response
-asset set, and publishes the release. A failed target
+asset set plus each target's Sigstore bundle, and publishes the release. A failed target
 therefore cannot produce a partial public release. Release binaries are generated
 artifacts and must not be committed to Git.
 

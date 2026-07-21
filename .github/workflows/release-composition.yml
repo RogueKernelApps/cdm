@@ -73,6 +73,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes \
+            bubblewrap \
             clang \
             libclang-dev \
             lld \
@@ -210,12 +211,22 @@ jobs:
             CDM_COMPAT_TESTS=0 \
             ./tests/integration.sh
       - name: Cryptographically attest exact release outputs
+        id: attest
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
           subject-path: |
             rust/target/dist/*.tar.gz
             rust/target/dist/*.provenance.intoto.json
             rust/target/dist/*.sha256
+          create-storage-record: ${{ github.repository_visibility == 'public' }}
+      - name: Preserve Sigstore attestation bundle
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          test -f "$BUNDLE_PATH"
+          target=$(rustc -vV | awk '/^host:/ {print $2}')
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          cp "$BUNDLE_PATH" "target/dist/cdm-$version-$target.sigstore.jsonl"
       - name: Upload exact release outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -225,6 +236,7 @@ jobs:
             rust/target/dist/*.sha256
             rust/target/dist/*.provenance.intoto.json
             rust/target/dist/*.notarization.json
+            rust/target/dist/*.sigstore.jsonl
           if-no-files-found: error
           retention-days: 14
       - name: Cleanup release workspace
@@ -300,6 +312,7 @@ jobs:
           for target in targets:
               runtime = f"cdm-{version}-{target}.tar.gz"
               provenance = f"cdm-{version}-{target}.provenance.intoto.json"
+              sigstore = f"cdm-{version}-{target}.sigstore.jsonl"
               source_matches = [
                   path.name
                   for path in top_level_files
@@ -316,6 +329,12 @@ jobs:
                   if len(matches) != 1 or len(checksum_matches) != 1:
                       raise SystemExit(f"incomplete or duplicate release asset: {name}")
                   selected.extend((matches[0], checksum_matches[0]))
+              signature_matches = [
+                  path for path in top_level_files if path.name == sigstore
+              ]
+              if len(signature_matches) != 1:
+                  raise SystemExit(f"missing or duplicate Sigstore bundle: {sigstore}")
+              selected.extend(signature_matches)
               notarization = [
                   path for path in top_level_files
                   if path.name == f"{runtime}.notarization.json"
@@ -323,8 +342,8 @@ jobs:
               if len(notarization) > 1:
                   raise SystemExit(f"duplicate notarization response for {target}")
               selected.extend(notarization)
-          if len(selected) not in (18, 19):
-              raise SystemExit(f"expected 18 or 19 release files, found {len(selected)}")
+          if len(selected) not in (21, 22):
+              raise SystemExit(f"expected 21 or 22 release files, found {len(selected)}")
           for source in selected:
               target = destination / source.name
               if target.exists():
