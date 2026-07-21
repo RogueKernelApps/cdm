@@ -315,10 +315,15 @@ jobs:
         working-directory: /tmp
         run: |
           target_path="$GITHUB_WORKSPACE/rust/target"
+          guest_init_target="$GITHUB_WORKSPACE/rust/guest-init/target"
           cargo_home="$CARGO_HOME"
           case "$target_path" in
             "$GITHUB_WORKSPACE"/rust/target) command -p rm -rf -- "$target_path" ;;
             *) echo "refusing unsafe target cleanup: $target_path" >&2; exit 1 ;;
+          esac
+          case "$guest_init_target" in
+            "$GITHUB_WORKSPACE"/rust/guest-init/target) command -p rm -rf -- "$guest_init_target" ;;
+            *) echo "refusing unsafe guest-init target cleanup: $guest_init_target" >&2; exit 1 ;;
           esac
           case "$cargo_home" in
             /tmp/cdm-cargo-home-"$GITHUB_RUN_ID"-*) command -p rm -rf -- "$cargo_home" ;;

@@ -229,13 +229,14 @@ runner user access to `/dev/kvm`, so it accepts the exact package in place.
 
 GitHub-hosted Linux AArch64 does not expose nested KVM. Register one dedicated
 Linux AArch64 acceptance runner with the exact labels `self-hosted`, `Linux`,
-`ARM64`, and `cdm-release`. It needs a trusted `/usr/bin/bwrap`, read/write
-`/dev/kvm`, and enough temporary space to download and unpack one candidate. The
-hosted runner still performs the expensive build. GitHub stores that output as an
-immutable candidate artifact; the AArch64 runner verifies its checksums, unpacks
-and accepts the exact package, and a hosted finalizer downloads that same
-candidate for Sigstore attestation and release upload. A failed or unavailable
-acceptance runner therefore cannot produce a publishable Linux AArch64 artifact.
+`ARM64`, and `cdm-release`. It needs a trusted `/usr/bin/bwrap`, `patchelf`,
+Python 3.11 or newer, read/write `/dev/kvm`, and enough temporary space to
+download and unpack one candidate. The hosted runner still performs the expensive
+build. GitHub stores that output as an immutable candidate artifact; the AArch64
+runner verifies its checksums, unpacks and accepts the exact package, and a hosted
+finalizer downloads that same candidate for Sigstore attestation and release
+upload. A failed or unavailable acceptance runner therefore cannot produce a
+publishable Linux AArch64 artifact.
 
 GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
 to boot CDM's libkrun package. Register one Apple-silicon runner with the exact
@@ -264,10 +265,10 @@ session: certificate import and identity discovery still work there, but
 reinstalled or upgraded.
 
 The workflow uses a run-specific Cargo home and always removes its Cargo cache,
-package target tree, and temporary release journeys after accepted artifacts have
-been uploaded or after a failed job. The Linux AArch64 acceptance job likewise
-removes downloaded candidates and release journeys. This cleanup prevents build
-products from accumulating on persistent runners.
+package and guest-init target trees, and temporary release journeys after
+accepted artifacts have been uploaded or after a failed job. The Linux AArch64
+acceptance job likewise removes downloaded candidates and release journeys. This
+cleanup prevents build products from accumulating on persistent runners.
 
 Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the

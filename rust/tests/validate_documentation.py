@@ -214,6 +214,7 @@ def main() -> int:
         'gh release upload "$GITHUB_REF_NAME"',
         'gh release edit "$GITHUB_REF_NAME" --draft=false',
         'Cleanup release workspace',
+        '"$GITHUB_WORKSPACE"/rust/guest-init/target) command -p rm -rf -- "$guest_init_target"',
         'runner: \'"ubuntu-22.04"\'',
         'runner: \'"ubuntu-22.04-arm"\'',
         'runs-on: ${{ fromJSON(\'["self-hosted","Linux","ARM64","cdm-release"]\') }}',
