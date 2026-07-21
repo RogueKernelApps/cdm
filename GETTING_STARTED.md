@@ -139,7 +139,7 @@ PACKAGE_DIR="target/dist/cdm-$VERSION-$TARGET"
 CDM="$PWD/$PACKAGE_DIR/bin/cdm" ./tests/integration.sh
 ```
 
-The runner never substitutes an older installed binary. `CDM_SKIP_VM=1` is the explicit native-only opt-out. OCI image downloads and authenticated/networked AI-tool checks are disabled unless `CDM_OCI_TESTS=1` and `CDM_AI_TESTS=1` are set. A signed-package run boots real microVMs where the target host supports them, but it does not by itself close every release-acceptance obligation; track the remaining target-native cases in [`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md).
+The runner never substitutes an older installed binary. `CDM_SKIP_VM=1` is the explicit native-only opt-out. OCI image downloads and authenticated/networked AI-tool checks are disabled unless `CDM_OCI_TESTS=1` and `CDM_AI_TESTS=1` are set. The production release workflow runs the mandatory exact-package acceptance on each supported target, including real microVM boots. Additional authenticated and compatibility checks remain explicit opt-ins; see the [release runbook](rust/packaging/README.md) and [`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md).
 
 Read [README.md](README.md) for the security caveats and [ARCHITECTURE.md](ARCHITECTURE.md) for the detailed model.
 Contributors and coding agents must also follow [AGENTS.md](AGENTS.md) and every closer scoped `AGENTS.md` for the files they touch.

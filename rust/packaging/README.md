@@ -222,10 +222,20 @@ artifacts and must not be committed to Git.
 ### GitHub release setup
 
 The Linux x86_64 and AArch64 packages build on GitHub-hosted `ubuntu-22.04` and
-`ubuntu-22.04-arm` runners. The workflow installs their release dependencies and
-requires package acceptance against the exact target-native artifacts. Ubuntu
-22.04 supplies a deliberate, older glibc release baseline instead of inheriting a
-maintainer workstation's distribution version.
+`ubuntu-22.04-arm` runners. Ubuntu 22.04 supplies a deliberate, older glibc
+release baseline instead of inheriting a maintainer workstation's distribution
+version. The x86_64 runner exposes KVM after the workflow grants its ephemeral
+runner user access to `/dev/kvm`, so it accepts the exact package in place.
+
+GitHub-hosted Linux AArch64 does not expose nested KVM. Register one dedicated
+Linux AArch64 acceptance runner with the exact labels `self-hosted`, `Linux`,
+`ARM64`, and `cdm-release`. It needs a trusted `/usr/bin/bwrap`, read/write
+`/dev/kvm`, and enough temporary space to download and unpack one candidate. The
+hosted runner still performs the expensive build. GitHub stores that output as an
+immutable candidate artifact; the AArch64 runner verifies its checksums, unpacks
+and accepts the exact package, and a hosted finalizer downloads that same
+candidate for Sigstore attestation and release upload. A failed or unavailable
+acceptance runner therefore cannot produce a publishable Linux AArch64 artifact.
 
 GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
 to boot CDM's libkrun package. Register one Apple-silicon runner with the exact
@@ -234,10 +244,18 @@ tools documented above, Docker for acquiring exact Alpine corresponding source,
 and permission to run a real libkrun microVM. Keep it dedicated and ephemeral
 where practical because release jobs execute repository code.
 
+Install self-hosted runners beneath a neutral, non-personal work path and give
+their service a neutral `HOME`; GitHub publishes action logs for public
+repositories, including paths printed by checkout and build tools. Keep runner
+registration credentials mode 0600 and never place signing material in the
+runner directory. The workflow imports the macOS identity from encrypted Actions
+secrets into a disposable keychain instead.
+
 The workflow uses a run-specific Cargo home and always removes its Cargo cache,
 package target tree, and temporary release journeys after accepted artifacts have
-been uploaded or after a failed job. This cleanup also prevents build products
-from accumulating on the persistent macOS runner.
+been uploaded or after a failed job. The Linux AArch64 acceptance job likewise
+removes downloaded candidates and release journeys. This cleanup prevents build
+products from accumulating on persistent runners.
 
 Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the

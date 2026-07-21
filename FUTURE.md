@@ -12,7 +12,9 @@ These capabilities are intentionally deferred. Implemented historical items were
 
 ## VM runtime
 
-- Complete the target-native packaged-VM acceptance matrix for the static guest init, including malformed plans, mount-target races, supplementary groups, signal escalation, and exit statuses 126/127.
+- Expand the target-native packaged-VM coverage beyond the current release gate,
+  with additional adversarial cases for malformed plans, mount-target races,
+  supplementary groups, signal escalation, and exit statuses 126/127.
 - Benchmark libkrun overlay-root APIs against the current disposable rootfs clone and OCI-layer merge before adding another storage path.
 
 ## Product and developer experience

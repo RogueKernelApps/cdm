@@ -21,7 +21,7 @@ jobs:
     name: Validate release revision
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Match release tag to Cargo version
         if: github.event_name == 'push'
         working-directory: rust
@@ -62,7 +62,7 @@ jobs:
     env:
       CARGO_HOME: /tmp/cdm-cargo-home-${{ github.run_id }}-${{ matrix.target }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
         with:
           toolchain: 1.90.0
@@ -82,6 +82,14 @@ jobs:
             patchelf \
             pkg-config \
             xz-utils
+      - name: Enable hosted x86_64 KVM acceptance
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          test -c /dev/kvm
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          sudo chmod 0600 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
       - name: Prepare ephemeral macOS signing keychain
         if: runner.os == 'macOS'
         env:
@@ -115,9 +123,7 @@ jobs:
             -s \
             -k "$keychain_password" \
             "$keychain"
-          security list-keychains -d user -s \
-            "$keychain" \
-            "$HOME/Library/Keychains/login.keychain-db"
+          security list-keychains -d user -s "$keychain"
           {
             printf 'CDM_SIGNING_KEYCHAIN=%s\n' "$keychain"
             printf 'CDM_SIGNING_KEYCHAIN_PASSWORD=%s\n' "$keychain_password"
@@ -186,6 +192,7 @@ jobs:
           }
           PY
       - name: Run exact target-native package acceptance
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: |
           target=$(rustc -vV | awk '/^host:/ {print $2}')
           version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
@@ -211,6 +218,7 @@ jobs:
             CDM_COMPAT_TESTS=0 \
             ./tests/integration.sh
       - name: Cryptographically attest exact release outputs
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         id: attest
         uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
         with:
@@ -220,6 +228,7 @@ jobs:
             rust/target/dist/*.sha256
           create-storage-record: ${{ github.repository_visibility == 'public' }}
       - name: Preserve Sigstore attestation bundle
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
@@ -228,6 +237,7 @@ jobs:
           version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
           cp "$BUNDLE_PATH" "target/dist/cdm-$version-$target.sigstore.jsonl"
       - name: Upload exact release outputs
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
@@ -239,6 +249,28 @@ jobs:
             rust/target/dist/*.sigstore.jsonl
           if-no-files-found: error
           retention-days: 14
+      - name: Upload Linux AArch64 release candidate
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-linux-aarch64-release
+          path: |
+            rust/target/dist/*.tar.gz
+            rust/target/dist/*.sha256
+            rust/target/dist/*.provenance.intoto.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload compact Linux AArch64 runtime candidate
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: candidate-linux-aarch64-runtime
+          path: |
+            rust/target/dist/cdm-*-aarch64-unknown-linux-gnu.tar.gz
+            rust/target/dist/cdm-*-aarch64-unknown-linux-gnu.tar.gz.sha256
+            !rust/target/dist/cdm-vm-sources-*
+          if-no-files-found: error
+          retention-days: 1
       - name: Cleanup release workspace
         if: always()
         working-directory: /tmp
@@ -270,10 +302,138 @@ jobs:
             esac
           fi
 
+  accept-linux-aarch64:
+    name: Linux AArch64 target-native acceptance
+    needs: compose
+    runs-on: ${{ fromJSON('["self-hosted","Linux","ARM64","cdm-release"]') }}
+    outputs:
+      runtime-sha256: ${{ steps.accept.outputs.runtime-sha256 }}
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download exact Linux AArch64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-linux-aarch64-runtime
+          path: rust/target/dist
+      - name: Verify and extract exact candidate
+        run: |
+          (
+            cd target/dist
+            for checksum in *.sha256; do
+              sha256sum -c "$checksum"
+            done
+          )
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          archive="target/dist/cdm-$version-aarch64-unknown-linux-gnu.tar.gz"
+          test -f "$archive"
+          tar -xzf "$archive" -C target/dist
+          ./packaging/package.sh verify-runtime \
+            "target/dist/cdm-$version-aarch64-unknown-linux-gnu" \
+            aarch64-unknown-linux-gnu
+      - name: Run exact target-native package acceptance
+        id: accept
+        run: |
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          package="$PWD/target/dist/cdm-$version-aarch64-unknown-linux-gnu"
+          archive="$package.tar.gz"
+          test -x "$package/bin/cdm"
+          printf 'runtime-sha256=%s\n' "$(sha256sum "$archive" | awk '{print $1}')" \
+            >> "$GITHUB_OUTPUT"
+          journey_root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/cdm-release-journey.XXXXXX")
+          relocated="$journey_root/relocated package with spaces"
+          cp -R "$package" "$relocated"
+          "$relocated/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
+
+          installed="$journey_root/installed prefix with spaces"
+          "$relocated/install.sh" install "$installed"
+          "$relocated/install.sh" verify "$installed"
+          "$installed/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
+          "$relocated/install.sh" uninstall "$installed"
+
+          CDM="$relocated/bin/cdm" \
+            CDM_REQUIRE_NATIVE=1 \
+            CDM_REQUIRE_VM=1 \
+            CDM_OCI_SMOKE_TESTS=1 \
+            CDM_OCI_TESTS=0 \
+            CDM_AI_TESTS=0 \
+            CDM_COMPAT_TESTS=0 \
+            ./tests/integration.sh
+      - name: Cleanup Linux AArch64 acceptance workspace
+        if: always()
+        working-directory: /tmp
+        run: |
+          target_path="$GITHUB_WORKSPACE/rust/target"
+          case "$target_path" in
+            "$GITHUB_WORKSPACE"/rust/target) command -p rm -rf -- "$target_path" ;;
+            *) echo "refusing unsafe target cleanup: $target_path" >&2; exit 1 ;;
+          esac
+          for journey in "$RUNNER_TEMP"/cdm-release-journey.*; do
+            [[ -d "$journey" ]] || continue
+            case "$journey" in
+              "$RUNNER_TEMP"/cdm-release-journey.*) command -p rm -rf -- "$journey" ;;
+              *) echo "refusing unsafe journey cleanup: $journey" >&2; exit 1 ;;
+            esac
+          done
+
+  finalize-linux-aarch64:
+    name: Attest accepted Linux AArch64 outputs
+    needs: [compose, accept-linux-aarch64]
+    runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download accepted Linux AArch64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: candidate-linux-aarch64-release
+          path: rust/target/dist
+      - name: Reverify exact accepted outputs
+        env:
+          ACCEPTED_RUNTIME_SHA256: ${{ needs.accept-linux-aarch64.outputs.runtime-sha256 }}
+        working-directory: rust/target/dist
+        run: |
+          for checksum in *.sha256; do
+            sha256sum -c "$checksum"
+          done
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' ../../Cargo.toml)
+          runtime="cdm-$version-aarch64-unknown-linux-gnu.tar.gz"
+          test "$(sha256sum "$runtime" | awk '{print $1}')" = \
+            "$ACCEPTED_RUNTIME_SHA256"
+      - name: Cryptographically attest exact accepted outputs
+        id: attest
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: |
+            rust/target/dist/*.tar.gz
+            rust/target/dist/*.provenance.intoto.json
+            rust/target/dist/*.sha256
+          create-storage-record: ${{ github.repository_visibility == 'public' }}
+      - name: Preserve Sigstore attestation bundle
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          test -f "$BUNDLE_PATH"
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' rust/Cargo.toml)
+          cp "$BUNDLE_PATH" \
+            "rust/target/dist/cdm-$version-aarch64-unknown-linux-gnu.sigstore.jsonl"
+      - name: Upload exact accepted release outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-linux-aarch64
+          path: |
+            rust/target/dist/*.tar.gz
+            rust/target/dist/*.sha256
+            rust/target/dist/*.provenance.intoto.json
+            rust/target/dist/*.sigstore.jsonl
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish GitHub Release
     if: github.event_name == 'push'
-    needs: compose
+    needs: [compose, finalize-linux-aarch64]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

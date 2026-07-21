@@ -14,10 +14,17 @@ personal information before submitting.
 
 ## Supported scope
 
-Security fixes target the current `main` branch. This project has not yet
-completed the target-native acceptance required to claim production support
-for published VM or Linux binary releases; see [FUTURE.md](FUTURE.md) and
-[`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md).
+Security fixes target the current `main` branch; no older release line currently
+has a separate support window. Published binaries are gated by target-native
+package, relocation, installation, real-VM, and integration acceptance on macOS
+AArch64, Linux x86_64, and Linux AArch64. See the
+[release runbook](rust/packaging/README.md) and
+[`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md) for the exact
+build and acceptance boundaries.
+
+Repository tests intentionally use syntactically realistic but nonfunctional
+credential examples to verify secret detection and redaction. They are labelled
+as test fixtures and must never be replaced with real credentials.
 
 ## Security expectations
 

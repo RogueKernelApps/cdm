@@ -101,7 +101,8 @@ for mode in $MODES; do
     OUT=$(SHORT_API_KEY=abc mode_exec "$mode" --scramble --no-network sh -c \
         'printf "%s" "$SHORT_API_KEY"')
     check_nonempty "$mode: --scramble injects a short secret-named value" "$OUT"
-    check_not "$mode: --scramble hides a short secret-named value" "$OUT" "abc"
+    check_eq "$mode: --scramble hides a short secret-named value" \
+        "$(test "$OUT" != abc; echo $?)" "0"
 
     OUT=$(mode_exec "$mode" --scramble --no-network sh -c 'printf "%s" "$API_KEY"')
     check_nonempty "$mode: --scramble injects API_KEY" "$OUT"

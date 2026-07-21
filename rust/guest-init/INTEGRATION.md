@@ -1,6 +1,8 @@
 # Guest-init integration design
 
-This note records the implemented build/runtime boundary. Target-native packaged VM acceptance is still required before a target is publishable.
+This note records the implemented build/runtime boundary. The production release
+workflow enforces target-native packaged VM acceptance before a target is
+publishable.
 
 ## Build boundary
 
@@ -28,7 +30,8 @@ The host should write the plan through the existing safe-root abstraction, and t
 
 ## Acceptance gate
 
-Release acceptance is incomplete until the exact signed runtime package passes both architectures' target-native VM suite, including:
+The exact signed runtime package must pass its target-native VM suite before the
+workflow can publish it. The enforced contract includes:
 
 - arguments containing whitespace, quotes, wildcard characters, newlines, and non-UTF-8 Unix bytes arrive unchanged;
 - the child sees only fake/explicit environment entries and the requested UID/GID with no supplementary groups;
