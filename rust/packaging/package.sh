@@ -313,21 +313,28 @@ verify_first_party_license() {
 import hashlib
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 
 root = pathlib.Path(sys.argv[1]).resolve()
 package_dir = pathlib.Path(sys.argv[2]).resolve()
 production = sys.argv[3] == "release"
-metadata = json.loads(subprocess.check_output(
-    ["cargo", "metadata", "--locked", "--format-version", "1"], cwd=root
-))
-package_id = metadata["resolve"]["root"]
-crate = next(item for item in metadata["packages"] if item["id"] == package_id)
-expected = crate.get("license")
-license_file = crate.get("license_file")
+if shutil.which("cargo"):
+    metadata = json.loads(subprocess.check_output(
+        ["cargo", "metadata", "--locked", "--format-version", "1"], cwd=root
+    ))
+    package_id = metadata["resolve"]["root"]
+    crate = next(item for item in metadata["packages"] if item["id"] == package_id)
+    expected = crate.get("license")
+    license_file = crate.get("license_file")
+else:
+    import tomllib
+    crate = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["package"]
+    expected = crate.get("license")
+    license_file = crate.get("license-file")
 if not expected and license_file:
-    if pathlib.Path(license_file).resolve() == (root.parent / "LICENSE").resolve():
+    if (root / license_file).resolve() == (root.parent / "LICENSE").resolve():
         expected = "LicenseRef-CDM"
 
 sbom = json.loads((package_dir / "SBOM.spdx.json").read_text(encoding="utf-8"))
