@@ -249,7 +249,11 @@ their service a neutral `HOME`; GitHub publishes action logs for public
 repositories, including paths printed by checkout and build tools. Keep runner
 registration credentials mode 0600 and never place signing material in the
 runner directory. The workflow imports the macOS identity from encrypted Actions
-secrets into a disposable keychain instead.
+secrets into a disposable keychain instead. The maintained runner layout uses
+`/Users/Shared/cdm-github-runners/cdm-macos-arm64` on macOS with
+`/Users/Shared/cdm-github-runners/home` as its service `HOME`, and
+`/opt/cdm-github-runners/cdm-linux-arm64` on Linux AArch64 with
+`/opt/cdm-github-runners/home` as its service `HOME`.
 
 The workflow uses a run-specific Cargo home and always removes its Cargo cache,
 package target tree, and temporary release journeys after accepted artifacts have
