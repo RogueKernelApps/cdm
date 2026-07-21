@@ -25,8 +25,8 @@ export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.7"
 ./packaging/package.sh release  # runtime and verified corresponding source
 ./packaging/package.sh runtime  # local validation only; do not redistribute alone
 ./packaging/package.sh sources  # incomplete unless CDM_ALPINE_SOURCE_DIR is set
-./packaging/package.sh verify-runtime target/dist/cdm-0.1.0-aarch64-apple-darwin aarch64-apple-darwin
-./packaging/package.sh verify target/dist/cdm-0.1.0-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
+./packaging/package.sh verify-runtime target/dist/cdm-0.1.1-aarch64-apple-darwin aarch64-apple-darwin
+./packaging/package.sh verify target/dist/cdm-0.1.1-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
 ```
 
 The output and adjacent `.sha256` files are under `target/dist/`. Downloads and upstream builds are cached under `target/package-work/` and remain ignored by Git.
