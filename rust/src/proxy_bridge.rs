@@ -44,14 +44,10 @@ impl ProxyBridge {
         accepted_port: u16,
     ) -> io::Result<Self> {
         use std::os::unix::fs::PermissionsExt;
-        let root = runtime_root.join(format!(
-            "proxy-bridge-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        ));
+        // The invocation runtime is already private and unique. Keep the
+        // additional bridge path short enough for sockaddr_un::sun_path even
+        // when the host supplies a long temporary-directory prefix.
+        let root = runtime_root.join("proxy-bridge");
         std::fs::create_dir(&root)?;
         let mut setup = BridgeSetupCleanup::new(root.clone());
         std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))?;
@@ -756,5 +752,21 @@ mod tests {
         let file = std::fs::File::open("/dev/null").unwrap();
         send_fd(&sender, file.as_raw_fd()).unwrap();
         assert!(receive_fd(&receiver).unwrap().is_some());
+    }
+
+    #[test]
+    fn bridge_socket_fits_beneath_a_long_runtime_path() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let mut component = format!("cdm-pb-{}-", std::process::id());
+        component.push_str(&"x".repeat(64 - component.len()));
+        let runtime = PathBuf::from("/tmp").join(component);
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let mut bridge = ProxyBridge::start_with_ports(&runtime, 1, 1).unwrap();
+        assert!(bridge.socket_path().as_os_str().as_bytes().len() < 104);
+        bridge.stop().unwrap();
+        std::fs::remove_dir(runtime).unwrap();
     }
 }
