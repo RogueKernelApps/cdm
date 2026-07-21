@@ -29,6 +29,8 @@ use guest_plan::guest_identity_for;
 use launcher::build_linux_launcher_arguments;
 #[cfg(all(test, target_os = "macos"))]
 use launcher::launcher_profile;
+#[cfg(all(test, target_os = "linux"))]
+use launcher::path_hidden_by_synthetic_tree;
 #[cfg(test)]
 use launcher::{
     explicit_tsi_features, krun_check, posix_spawn_wait, to_cstring, to_ptr_array,

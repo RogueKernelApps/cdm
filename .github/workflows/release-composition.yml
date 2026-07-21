@@ -122,17 +122,21 @@ jobs:
             -S apple-tool:,apple:,codesign: \
             -s \
             -k "$keychain_password" \
-            "$keychain"
+            "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain"
+          identity=$(
+            security find-identity -v -p codesigning "$keychain" \
+              | awk '$2 ~ /^[[:xdigit:]]{40}$/ { print $2; exit }'
+          )
+          [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]]
           {
             printf 'CDM_SIGNING_KEYCHAIN=%s\n' "$keychain"
             printf 'CDM_SIGNING_KEYCHAIN_PASSWORD=%s\n' "$keychain_password"
+            printf 'CDM_CODESIGN_IDENTITY=%s\n' "$identity"
           } >> "$GITHUB_ENV"
           keep_keychain=1
       - name: Verify macOS signing access
         if: runner.os == 'macOS'
-        env:
-          CDM_CODESIGN_IDENTITY: ${{ secrets.CDM_CODESIGN_IDENTITY }}
         run: |
           probe="$RUNNER_TEMP/cdm-codesign-probe"
           cleanup_probe() {
@@ -154,7 +158,6 @@ jobs:
         run: ./packaging/prepare-alpine-sources-container.sh
       - name: Compose production release
         env:
-          CDM_CODESIGN_IDENTITY: ${{ runner.os == 'macOS' && secrets.CDM_CODESIGN_IDENTITY || '' }}
           CDM_NOTARY_PROFILE: ${{ runner.os == 'macOS' && secrets.CDM_NOTARY_PROFILE || '' }}
         run: |
           source packaging/versions.env

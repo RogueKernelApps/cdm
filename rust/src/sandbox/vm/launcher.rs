@@ -453,6 +453,11 @@ pub(super) fn build_linux_launcher_arguments(
             continue;
         }
         for path in rule.paths() {
+            if access.host == HostAccess::Normal
+                && path_hidden_by_synthetic_tree(path, &access.synthetic_dirs)
+            {
+                continue;
+            }
             if access.exposes(path, &cfg.runtime_dir) {
                 push_bwrap_bind(&mut args, "--ro-bind", path, path);
             }
@@ -463,6 +468,11 @@ pub(super) fn build_linux_launcher_arguments(
             continue;
         }
         for path in rule.paths() {
+            if access.host == HostAccess::Normal
+                && path_hidden_by_synthetic_tree(path, &access.synthetic_dirs)
+            {
+                continue;
+            }
             if !access.exposes(path, &cfg.runtime_dir) {
                 continue;
             }
@@ -507,6 +517,13 @@ pub(super) fn build_linux_launcher_arguments(
         plan_path.as_os_str().into(),
     ]);
     Ok(args)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn path_hidden_by_synthetic_tree(path: &Path, synthetic_dirs: &[PathBuf]) -> bool {
+    synthetic_dirs
+        .iter()
+        .any(|root| path == root || path.starts_with(root))
 }
 
 #[cfg(target_os = "linux")]

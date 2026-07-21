@@ -346,6 +346,28 @@ fn linux_vm_launcher_arguments_confine_vmm_and_translate_network_mode() {
     assert!(!args.windows(3).any(|pair| pair == ["--ro-bind", "/", "/"]));
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn synthetic_runtime_tree_supersedes_nested_socket_denials() {
+    let synthetic = vec![
+        std::path::PathBuf::from("/run"),
+        std::path::PathBuf::from("/var/run"),
+    ];
+
+    assert!(path_hidden_by_synthetic_tree(
+        std::path::Path::new("/run/docker.sock"),
+        &synthetic,
+    ));
+    assert!(path_hidden_by_synthetic_tree(
+        std::path::Path::new("/var/run/docker.sock"),
+        &synthetic,
+    ));
+    assert!(!path_hidden_by_synthetic_tree(
+        std::path::Path::new("/home/user/.docker/run/docker.sock"),
+        &synthetic,
+    ));
+}
+
 #[test]
 fn test_write_init_script() {
     let temp = std::env::temp_dir().join(format!("cdm-init-test-{}", std::process::id()));
