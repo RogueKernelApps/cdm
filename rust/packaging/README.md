@@ -265,8 +265,8 @@ Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the
 `CDM_CERTIFICATE_P12` repository Actions secret and its export password as
 `CDM_CERTIFICATE_PASSWORD`. The workflow imports that identity into a run-specific
-keychain, selects that keychain as the service account's default for the job,
-derives its exact codesigning identity from the imported keychain,
+keychain using the macOS account's security context, derives its exact
+codesigning identity from the imported keychain,
 grants only Apple's signing tools access, verifies a timestamped probe signature
 before the expensive build, and deletes the keychain after success or failure.
 It suppresses certificate labels in public action logs and does not depend on the
@@ -275,8 +275,9 @@ and package signer pass that disposable keychain explicitly through
 `CDM_CODESIGN_KEYCHAIN`, so signing does not depend on per-user keychain search
 preferences. The self-hosted runner keeps a neutral service `HOME` for public log
 paths, but `codesign` receives the macOS account home through
-`CDM_CODESIGN_HOME`; Apple's signing service otherwise cannot resolve even an
-identity from an explicitly selected keychain.
+`CDM_CODESIGN_HOME` and the disposable keychain is unlocked in that same account
+context; Apple's signing service otherwise cannot resolve or use an identity
+from an explicitly selected keychain.
 
 To require Apple notarization, store credentials on the runner with
 `xcrun notarytool store-credentials`, then add the optional

@@ -101,32 +101,39 @@ jobs:
           keychain="$RUNNER_TEMP/cdm-signing.keychain-db"
           certificate="$RUNNER_TEMP/cdm-signing.p12"
           keychain_password="cdm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          codesign_home=$(
+            dscl . -read "/Users/$(id -un)" NFSHomeDirectory \
+              | awk '{ print $2 }'
+          )
+          [[ "$codesign_home" == /* && -d "$codesign_home" ]]
           keep_keychain=0
           cleanup_signing_setup() {
             command -p rm -f -- "$certificate"
             if [[ "$keep_keychain" -eq 0 && -e "$keychain" ]]; then
-              security delete-keychain "$keychain" \
+              HOME="$codesign_home" security delete-keychain "$keychain" \
                 || command -p rm -f -- "$keychain"
             fi
           }
           trap cleanup_signing_setup EXIT
           printf '%s' "$CDM_CERTIFICATE_P12" | /usr/bin/base64 -D > "$certificate"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security import "$certificate" \
+          HOME="$codesign_home" security create-keychain \
+            -p "$keychain_password" "$keychain"
+          HOME="$codesign_home" security set-keychain-settings \
+            -lut 21600 "$keychain"
+          HOME="$codesign_home" security unlock-keychain \
+            -p "$keychain_password" "$keychain"
+          HOME="$codesign_home" security import "$certificate" \
             -k "$keychain" \
             -P "$CDM_CERTIFICATE_PASSWORD" \
             -T /usr/bin/codesign
-          security set-key-partition-list \
+          HOME="$codesign_home" security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s \
             -k "$keychain_password" \
             "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain"
-          security default-keychain -d user -s "$keychain"
           identity_line=$(
-            security find-identity -v -p codesigning "$keychain" \
+            HOME="$codesign_home" security find-identity \
+              -v -p codesigning "$keychain" \
               | awk '$2 ~ /^[[:xdigit:]]{40}$/ { print; exit }'
           )
           identity_fingerprint=$(awk '{ print $2 }' <<< "$identity_line")
@@ -155,14 +162,14 @@ jobs:
             esac
           }
           trap cleanup_probe EXIT
-          security unlock-keychain \
-            -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
-            "$CDM_SIGNING_KEYCHAIN"
           codesign_home=$(
             dscl . -read "/Users/$(id -un)" NFSHomeDirectory \
               | awk '{ print $2 }'
           )
           [[ "$codesign_home" == /* && -d "$codesign_home" ]]
+          HOME="$codesign_home" security unlock-keychain \
+            -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
+            "$CDM_SIGNING_KEYCHAIN"
           cp /usr/bin/true "$probe"
           HOME="$codesign_home" codesign --force --timestamp \
             --keychain "$CDM_CODESIGN_KEYCHAIN" \
@@ -185,6 +192,9 @@ jobs:
                 | awk '{ print $2 }'
             )
             [[ "$codesign_home" == /* && -d "$codesign_home" ]]
+            HOME="$codesign_home" security unlock-keychain \
+              -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
+              "$CDM_SIGNING_KEYCHAIN"
             CDM_CODESIGN_HOME="$codesign_home" ./packaging/package.sh release
           else
             ./packaging/package.sh release
@@ -322,9 +332,15 @@ jobs:
             esac
           done
           if [[ -n "${CDM_SIGNING_KEYCHAIN:-}" ]]; then
+            codesign_home=$(
+              dscl . -read "/Users/$(id -un)" NFSHomeDirectory \
+                | awk '{ print $2 }'
+            )
+            [[ "$codesign_home" == /* && -d "$codesign_home" ]]
             case "$CDM_SIGNING_KEYCHAIN" in
               "$RUNNER_TEMP"/cdm-signing.keychain-db)
-                security delete-keychain "$CDM_SIGNING_KEYCHAIN" \
+                HOME="$codesign_home" security delete-keychain \
+                  "$CDM_SIGNING_KEYCHAIN" \
                   || command -p rm -f -- "$CDM_SIGNING_KEYCHAIN"
                 ;;
               *) echo "refusing unsafe signing-keychain cleanup" >&2; exit 1 ;;
