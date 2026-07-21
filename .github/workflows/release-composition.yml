@@ -44,14 +44,17 @@ jobs:
             runner: '["self-hosted","macOS","ARM64","cdm-release"]'
             artifact: release-macos-aarch64
             target: aarch64-apple-darwin
+            guest_target: aarch64-unknown-linux-musl
           - name: Linux x86_64 production package
             runner: '"ubuntu-22.04"'
             artifact: release-linux-x86_64
             target: x86_64-unknown-linux-gnu
+            guest_target: x86_64-unknown-linux-musl
           - name: Linux AArch64 production package
             runner: '"ubuntu-22.04-arm"'
             artifact: release-linux-aarch64
             target: aarch64-unknown-linux-gnu
+            guest_target: aarch64-unknown-linux-musl
     runs-on: ${{ fromJSON(matrix.runner) }}
     defaults:
       run:
@@ -64,6 +67,7 @@ jobs:
         with:
           toolchain: 1.90.0
           components: clippy,rustfmt
+          targets: ${{ matrix.guest_target }}
       - name: Install Linux release build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -77,6 +81,66 @@ jobs:
             patchelf \
             pkg-config \
             xz-utils
+      - name: Prepare ephemeral macOS signing keychain
+        if: runner.os == 'macOS'
+        env:
+          CDM_CERTIFICATE_P12: ${{ secrets.CDM_CERTIFICATE_P12 }}
+          CDM_CERTIFICATE_PASSWORD: ${{ secrets.CDM_CERTIFICATE_PASSWORD }}
+        run: |
+          test -n "$CDM_CERTIFICATE_P12"
+          test -n "$CDM_CERTIFICATE_PASSWORD"
+          keychain="$RUNNER_TEMP/cdm-signing.keychain-db"
+          certificate="$RUNNER_TEMP/cdm-signing.p12"
+          keychain_password="cdm-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          keep_keychain=0
+          cleanup_signing_setup() {
+            command -p rm -f -- "$certificate"
+            if [[ "$keep_keychain" -eq 0 && -e "$keychain" ]]; then
+              security delete-keychain "$keychain" \
+                || command -p rm -f -- "$keychain"
+            fi
+          }
+          trap cleanup_signing_setup EXIT
+          printf '%s' "$CDM_CERTIFICATE_P12" | /usr/bin/base64 -D > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" \
+            -k "$keychain" \
+            -P "$CDM_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$keychain_password" \
+            "$keychain"
+          security list-keychains -d user -s \
+            "$keychain" \
+            "$HOME/Library/Keychains/login.keychain-db"
+          {
+            printf 'CDM_SIGNING_KEYCHAIN=%s\n' "$keychain"
+            printf 'CDM_SIGNING_KEYCHAIN_PASSWORD=%s\n' "$keychain_password"
+          } >> "$GITHUB_ENV"
+          keep_keychain=1
+      - name: Verify macOS signing access
+        if: runner.os == 'macOS'
+        env:
+          CDM_CODESIGN_IDENTITY: ${{ secrets.CDM_CODESIGN_IDENTITY }}
+        run: |
+          probe="$RUNNER_TEMP/cdm-codesign-probe"
+          cleanup_probe() {
+            case "$probe" in
+              "$RUNNER_TEMP"/cdm-codesign-probe) command -p rm -f -- "$probe" ;;
+              *) exit 1 ;;
+            esac
+          }
+          trap cleanup_probe EXIT
+          security unlock-keychain \
+            -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
+            "$CDM_SIGNING_KEYCHAIN"
+          cp /usr/bin/true "$probe"
+          codesign --force --timestamp --sign "$CDM_CODESIGN_IDENTITY" "$probe"
+          codesign --verify --strict "$probe"
       - name: Verify packaging metadata
         run: bash packaging/tests.sh
       - name: Acquire exact Alpine corresponding source
@@ -184,6 +248,15 @@ jobs:
               *) echo "refusing unsafe journey cleanup: $journey" >&2; exit 1 ;;
             esac
           done
+          if [[ -n "${CDM_SIGNING_KEYCHAIN:-}" ]]; then
+            case "$CDM_SIGNING_KEYCHAIN" in
+              "$RUNNER_TEMP"/cdm-signing.keychain-db)
+                security delete-keychain "$CDM_SIGNING_KEYCHAIN" \
+                  || command -p rm -f -- "$CDM_SIGNING_KEYCHAIN"
+                ;;
+              *) echo "refusing unsafe signing-keychain cleanup" >&2; exit 1 ;;
+            esac
+          fi
 
   publish:
     name: Publish GitHub Release

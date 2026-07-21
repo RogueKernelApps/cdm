@@ -227,14 +227,21 @@ package target tree, and temporary release journeys after accepted artifacts hav
 been uploaded or after a failed job. This cleanup also prevents build products
 from accumulating on the persistent macOS runner.
 
-The macOS runner also needs the Developer ID Application certificate installed in
-its signing keychain. Add a repository Actions secret named
-`CDM_CODESIGN_IDENTITY` containing the exact identity reported by
-`security find-identity -v -p codesigning`. To require Apple notarization, first
-store credentials on that runner with `xcrun notarytool store-credentials`, then
-add the optional `CDM_NOTARY_PROFILE` repository secret containing that keychain
-profile name. With no notary-profile secret, the package is still Developer ID
-signed but is not submitted for notarization.
+Export only the Developer ID Application certificate and private key as a
+password-protected PKCS #12 file. Add its single-line Base64 representation as the
+`CDM_CERTIFICATE_P12` repository Actions secret and its export password as
+`CDM_CERTIFICATE_PASSWORD`. Add `CDM_CODESIGN_IDENTITY` containing the exact
+identity reported by `security find-identity -v -p codesigning`. The workflow
+imports that identity into a run-specific keychain, grants only Apple's signing
+tools access, verifies a timestamped probe signature before the expensive build,
+and deletes the keychain after success or failure. It does not depend on the
+runner user's login keychain.
+
+To require Apple notarization, store credentials on the runner with
+`xcrun notarytool store-credentials`, then add the optional
+`CDM_NOTARY_PROFILE` repository secret containing that keychain profile name.
+With no notary-profile secret, the package is still Developer ID signed but is
+not submitted for notarization.
 
 The publish job alone requests `contents: write`; keep the repository-wide default
 token permission read-only. The repository or organization policy must permit that
