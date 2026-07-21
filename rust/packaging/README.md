@@ -209,19 +209,23 @@ artifacts and must not be committed to Git.
 
 ### GitHub release setup
 
-The workflow uses target-native self-hosted GitHub Actions runners so its real
-libkrun VM acceptance is not weakened to compile-only testing. Register one runner
-for each of these exact label sets:
+The Linux x86_64 and AArch64 packages build on GitHub-hosted `ubuntu-22.04` and
+`ubuntu-22.04-arm` runners. The workflow installs their release dependencies and
+requires package acceptance against the exact target-native artifacts. Ubuntu
+22.04 supplies a deliberate, older glibc release baseline instead of inheriting a
+maintainer workstation's distribution version.
 
-- `self-hosted`, `macOS`, `ARM64`, `cdm-release`
-- `self-hosted`, `Linux`, `X64`, `cdm-release`
-- `self-hosted`, `Linux`, `ARM64`, `cdm-release`
+GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
+to boot CDM's libkrun package. Register one Apple-silicon runner with the exact
+labels `self-hosted`, `macOS`, `ARM64`, and `cdm-release`. It needs the macOS build
+tools documented above, Docker for acquiring exact Alpine corresponding source,
+and permission to run a real libkrun microVM. Keep it dedicated and ephemeral
+where practical because release jobs execute repository code.
 
-Each runner needs the build tools documented above, Docker for acquiring exact
-Alpine corresponding source, and the ability to run a real libkrun microVM. Use
-the intended oldest supported glibc baseline for each Linux release runner. Keep
-the runners dedicated and ephemeral where practical because release jobs execute
-repository code.
+The workflow uses a run-specific Cargo home and always removes its Cargo cache,
+package target tree, and temporary release journeys after accepted artifacts have
+been uploaded or after a failed job. This cleanup also prevents build products
+from accumulating on the persistent macOS runner.
 
 The macOS runner also needs the Developer ID Application certificate installed in
 its signing keychain. Add a repository Actions secret named

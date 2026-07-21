@@ -213,6 +213,10 @@ def main() -> int:
         'gh release create "$GITHUB_REF_NAME" --draft',
         'gh release upload "$GITHUB_REF_NAME"',
         'gh release edit "$GITHUB_REF_NAME" --draft=false',
+        'Cleanup release workspace',
+        'runner: \'"ubuntu-22.04"\'',
+        'runner: \'"ubuntu-22.04-arm"\'',
+        'Install Linux release build dependencies',
     )
     for marker in release_publication_markers:
         if marker not in release_workflow:

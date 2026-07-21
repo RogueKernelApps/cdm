@@ -45,23 +45,38 @@ jobs:
             artifact: release-macos-aarch64
             target: aarch64-apple-darwin
           - name: Linux x86_64 production package
-            runner: '["self-hosted","Linux","X64","cdm-release"]'
+            runner: '"ubuntu-22.04"'
             artifact: release-linux-x86_64
             target: x86_64-unknown-linux-gnu
           - name: Linux AArch64 production package
-            runner: '["self-hosted","Linux","ARM64","cdm-release"]'
+            runner: '"ubuntu-22.04-arm"'
             artifact: release-linux-aarch64
             target: aarch64-unknown-linux-gnu
     runs-on: ${{ fromJSON(matrix.runner) }}
     defaults:
       run:
         working-directory: rust
+    env:
+      CARGO_HOME: /tmp/cdm-cargo-home-${{ github.run_id }}-${{ matrix.target }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
         with:
           toolchain: 1.90.0
           components: clippy,rustfmt
+      - name: Install Linux release build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            clang \
+            libclang-dev \
+            lld \
+            make \
+            musl-tools \
+            patchelf \
+            pkg-config \
+            xz-utils
       - name: Verify packaging metadata
         run: bash packaging/tests.sh
       - name: Acquire exact Alpine corresponding source
@@ -148,6 +163,27 @@ jobs:
             rust/target/dist/*.notarization.json
           if-no-files-found: error
           retention-days: 14
+      - name: Cleanup release workspace
+        if: always()
+        working-directory: /tmp
+        run: |
+          target_path="$GITHUB_WORKSPACE/rust/target"
+          cargo_home="$CARGO_HOME"
+          case "$target_path" in
+            "$GITHUB_WORKSPACE"/rust/target) command -p rm -rf -- "$target_path" ;;
+            *) echo "refusing unsafe target cleanup: $target_path" >&2; exit 1 ;;
+          esac
+          case "$cargo_home" in
+            /tmp/cdm-cargo-home-"$GITHUB_RUN_ID"-*) command -p rm -rf -- "$cargo_home" ;;
+            *) echo "refusing unsafe Cargo cleanup: $cargo_home" >&2; exit 1 ;;
+          esac
+          for journey in "$RUNNER_TEMP"/cdm-release-journey.*; do
+            [[ -d "$journey" ]] || continue
+            case "$journey" in
+              "$RUNNER_TEMP"/cdm-release-journey.*) command -p rm -rf -- "$journey" ;;
+              *) echo "refusing unsafe journey cleanup: $journey" >&2; exit 1 ;;
+            esac
+          done
 
   publish:
     name: Publish GitHub Release
