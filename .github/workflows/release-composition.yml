@@ -220,7 +220,7 @@ jobs:
       - name: Cryptographically attest exact release outputs
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         id: attest
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
           subject-path: |
             rust/target/dist/*.tar.gz
@@ -403,7 +403,7 @@ jobs:
             "$ACCEPTED_RUNTIME_SHA256"
       - name: Cryptographically attest exact accepted outputs
         id: attest
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
         with:
           subject-path: |
             rust/target/dist/*.tar.gz
