@@ -192,9 +192,9 @@ verify an archive directly with, for example:
 
 ```bash
 gh attestation verify cdm-<version>-<target>.tar.gz \
-  --repo RogueKernel/cdm \
+  --repo RogueKernelApps/cdm \
   --bundle cdm-<version>-<target>.sigstore.jsonl \
-  --signer-workflow RogueKernel/cdm/.github/workflows/release-composition.yml
+  --signer-workflow RogueKernelApps/cdm/.github/workflows/release-composition.yml
 ```
 
 Public repositories additionally persist the attestation in GitHub's API, where

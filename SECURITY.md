@@ -5,7 +5,7 @@
 Do not open a public issue for a vulnerability or include real credentials in
 a report. Use GitHub's private vulnerability-reporting flow:
 
-<https://github.com/RogueKernel/cdm/security/advisories/new>
+<https://github.com/RogueKernelApps/cdm/security/advisories/new>
 
 Include the affected commit or version, host platform, selected CDM flags and
 backend, reproduction steps using synthetic credentials, and the expected and

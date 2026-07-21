@@ -520,7 +520,10 @@ pub(super) fn build_linux_launcher_arguments(
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn path_hidden_by_synthetic_tree(path: &Path, synthetic_dirs: &[PathBuf]) -> bool {
+pub(super) fn path_hidden_by_synthetic_tree(
+    path: &Path,
+    synthetic_dirs: &[std::path::PathBuf],
+) -> bool {
     synthetic_dirs
         .iter()
         .any(|root| path == root || path.starts_with(root))
