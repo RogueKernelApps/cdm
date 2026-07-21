@@ -125,7 +125,7 @@ jobs:
           HOME="$codesign_home" security import "$certificate" \
             -k "$keychain" \
             -P "$CDM_CERTIFICATE_PASSWORD" \
-            -T /usr/bin/codesign
+            -A
           HOME="$codesign_home" security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s \

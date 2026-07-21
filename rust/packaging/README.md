@@ -266,8 +266,8 @@ password-protected PKCS #12 file. Add its single-line Base64 representation as t
 `CDM_CERTIFICATE_P12` repository Actions secret and its export password as
 `CDM_CERTIFICATE_PASSWORD`. The workflow imports that identity into a run-specific
 keychain using the macOS account's security context, derives its exact
-codesigning identity from the imported keychain,
-grants only Apple's signing tools access, verifies a timestamped probe signature
+codesigning identity from the imported keychain, allows noninteractive access to
+that key only inside the disposable job keychain, verifies a timestamped probe signature
 before the expensive build, and deletes the keychain after success or failure.
 It suppresses certificate labels in public action logs and does not depend on the
 runner user's login keychain or a separate identity-name secret. Both the probe
