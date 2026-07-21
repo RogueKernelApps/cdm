@@ -5,12 +5,12 @@ section "CLI Validation"
 
 for shell in bash zsh fish; do
     OUT=$("$CDM" completions "$shell" 2>/dev/null)
-    if [ "$?" -eq 0 ] && echo "$OUT" | grep -Fq "allow-rw" && \
-        echo "$OUT" | grep -Fq "preset" && echo "$OUT" | grep -Fq "scramble" && \
-        echo "$OUT" | grep -Fq "trust" && \
-        echo "$OUT" | grep -Fq "project" && echo "$OUT" | grep -Fq "version" && \
-        echo "$OUT" | grep -Fq "bash" && echo "$OUT" | grep -Fq "zsh" && \
-        echo "$OUT" | grep -Fq "fish"; then
+    if [ "$?" -eq 0 ] && grep -Fq "allow-rw" <<<"$OUT" && \
+        grep -Fq "preset" <<<"$OUT" && grep -Fq "scramble" <<<"$OUT" && \
+        grep -Fq "trust" <<<"$OUT" && \
+        grep -Fq "project" <<<"$OUT" && grep -Fq "version" <<<"$OUT" && \
+        grep -Fq "bash" <<<"$OUT" && grep -Fq "zsh" <<<"$OUT" && \
+        grep -Fq "fish" <<<"$OUT"; then
         printf "  ${GREEN}PASS${NC} completions/%s derive flags and subcommands from typed CLI\n" "$shell"; PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} completions/%s include --allow-rw\n" "$shell"; FAIL=$((FAIL + 1))
@@ -28,14 +28,14 @@ COMPLETION_SHELLS=$(printf '%s\n' "$ZSH_COMPLETIONS" | awk '
     capture { print }
     capture && /^[[:space:]]*;;/ { exit }
 ')
-if echo "$RUN_COMPLETIONS" | grep -Fq -- '--allow-rw' && \
-    echo "$RUN_COMPLETIONS" | grep -Fq -- '--report-json' && \
-    echo "$RUN_COMPLETIONS" | grep -Fq -- '--scramble'; then
+if grep -Fq -- '--allow-rw' <<<"$RUN_COMPLETIONS" && \
+    grep -Fq -- '--report-json' <<<"$RUN_COMPLETIONS" && \
+    grep -Fq -- '--scramble' <<<"$RUN_COMPLETIONS"; then
     printf "  ${GREEN}PASS${NC} zsh run subcommand owns the typed run flags\n"; PASS=$((PASS + 1))
 else
     printf "  ${RED}FAIL${NC} zsh run subcommand owns the typed run flags\n"; FAIL=$((FAIL + 1))
 fi
-if echo "$COMPLETION_SHELLS" | grep -Fq 'bash zsh fish'; then
+if grep -Fq 'bash zsh fish' <<<"$COMPLETION_SHELLS"; then
     printf "  ${GREEN}PASS${NC} zsh completions subcommand enumerates supported shells\n"; PASS=$((PASS + 1))
 else
     printf "  ${RED}FAIL${NC} zsh completions subcommand enumerates supported shells\n"; FAIL=$((FAIL + 1))
@@ -48,7 +48,7 @@ for args in \
     "--no-network --no-proxy"; do
     STDERR=$("$CDM" $args true 2>&1 >/dev/null)
     RC=$?
-    if [ "$RC" -eq 2 ] && echo "$STDERR" | grep -Eq "cannot be combined|do not combine|domain rules require"; then
+    if [ "$RC" -eq 2 ] && grep -Eq "cannot be combined|do not combine|domain rules require" <<<"$STDERR"; then
         printf "  ${GREEN}PASS${NC} invalid network state is rejected: %s\n" "$args"; PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} invalid network state is rejected: %s (rc=%s, stderr=%s)\n" "$args" "$RC" "$STDERR"
@@ -59,7 +59,7 @@ done
 for flag in --allow-ro --allow-rw --allow-domains --deny-domains --preset; do
     STDERR=$("$CDM" "$flag" 2>&1 >/dev/null)
     RC=$?
-    if [ "$RC" -eq 2 ] && echo "$STDERR" | grep -Eq "requires|required"; then
+    if [ "$RC" -eq 2 ] && grep -Eq "requires|required" <<<"$STDERR"; then
         printf "  ${GREEN}PASS${NC} %s rejects a missing value\n" "$flag"; PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} %s rejects a missing value (rc=%s, stderr=%s)\n" "$flag" "$RC" "$STDERR"
@@ -68,7 +68,7 @@ for flag in --allow-ro --allow-rw --allow-domains --deny-domains --preset; do
 done
 
 STDERR=$("$CDM" --preset does-not-exist true 2>&1 >/dev/null)
-if [ "$?" -eq 2 ] && echo "$STDERR" | grep -Fq 'unknown preset'; then
+if [ "$?" -eq 2 ] && grep -Fq 'unknown preset' <<<"$STDERR"; then
     printf "  ${GREEN}PASS${NC} unknown configuration preset is rejected\n"; PASS=$((PASS + 1))
 else
     printf "  ${RED}FAIL${NC} unknown configuration preset is rejected\n"; FAIL=$((FAIL + 1))
@@ -80,9 +80,9 @@ printf '[package]\nname="fixture"\nversion="0.1.0"\n' > "$PROJECT_TEST/Cargo.tom
 printf '{}\n' > "$PROJECT_TEST/.cdm/config.json"
 PROJECT_ROOT=$(CDPATH= cd -- "$PROJECT_TEST" && pwd -P)
 PROJECT_OUTPUT=$(cd "$PROJECT_TEST/src/deep" && "$CDM" project 2>&1)
-if [ "$?" -eq 0 ] && echo "$PROJECT_OUTPUT" | grep -Fq "root: $PROJECT_ROOT" && \
-    echo "$PROJECT_OUTPUT" | grep -Fq 'kind: rust' && \
-    echo "$PROJECT_OUTPUT" | grep -Fq "config: $PROJECT_ROOT/.cdm/config.json"; then
+if [ "$?" -eq 0 ] && grep -Fq "root: $PROJECT_ROOT" <<<"$PROJECT_OUTPUT" && \
+    grep -Fq 'kind: rust' <<<"$PROJECT_OUTPUT" && \
+    grep -Fq "config: $PROJECT_ROOT/.cdm/config.json" <<<"$PROJECT_OUTPUT"; then
     printf "  ${GREEN}PASS${NC} project reports deterministic nearest root, kind, and config without trusting it\n"; PASS=$((PASS + 1))
 else
     printf "  ${RED}FAIL${NC} project reports deterministic nearest root, kind, and config\n"; FAIL=$((FAIL + 1))
