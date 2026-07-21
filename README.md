@@ -114,9 +114,12 @@ cd rust
 ./packaging/package.sh runtime
 ```
 
-Target-native packaged-VM and Linux release acceptance is not yet complete.
-Do not present source publication or compile-only CI as proof that production
-VM binaries are ready. Remaining work is tracked in
+Production releases are composed on target-native macOS AArch64, Linux x86_64,
+and Linux AArch64 GitHub Actions runners. Every target must pass package,
+relocation, installation, real-VM, and integration acceptance before the workflow
+attests the artifacts and publishes a GitHub Release. See the
+[packaging and release runbook](rust/packaging/README.md) for runner, signing, and
+tagging requirements. Remaining non-release work is tracked in
 [`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md) and
 [FUTURE.md](FUTURE.md).
 

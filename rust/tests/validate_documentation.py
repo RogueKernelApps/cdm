@@ -205,6 +205,20 @@ def main() -> int:
         "Upload exact release outputs"
     ):
         errors.append("production release uploads outputs before exact-package acceptance")
+    release_publication_markers = (
+        'tags:',
+        '- "v*"',
+        'github.event_name == \'push\'',
+        'needs: compose',
+        'gh release create "$GITHUB_REF_NAME" --draft',
+        'gh release upload "$GITHUB_REF_NAME"',
+        'gh release edit "$GITHUB_REF_NAME" --draft=false',
+    )
+    for marker in release_publication_markers:
+        if marker not in release_workflow:
+            errors.append(
+                f"production release workflow missing tag publication marker: {marker}"
+            )
 
     test_index = (RUST / "tests/README.md").read_text(encoding="utf-8")
     runner = (RUST / "tests/integration.sh").read_text(encoding="utf-8")

@@ -1,7 +1,14 @@
 name: Production release composition
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+
+concurrency:
+  group: production-release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   attestations: write
@@ -10,18 +17,41 @@ permissions:
   id-token: write
 
 jobs:
+  preflight:
+    name: Validate release revision
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Match release tag to Cargo version
+        if: github.event_name == 'push'
+        working-directory: rust
+        run: |
+          version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
+          expected="v$version"
+          if [[ "$GITHUB_REF_TYPE" != tag || "$GITHUB_REF_NAME" != "$expected" ]]; then
+            echo "release tag $GITHUB_REF_NAME does not match Cargo version $expected" >&2
+            exit 1
+          fi
+
   compose:
     name: ${{ matrix.name }}
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: macOS AArch64 production package
             runner: '["self-hosted","macOS","ARM64","cdm-release"]'
+            artifact: release-macos-aarch64
+            target: aarch64-apple-darwin
           - name: Linux x86_64 production package
             runner: '["self-hosted","Linux","X64","cdm-release"]'
+            artifact: release-linux-x86_64
+            target: x86_64-unknown-linux-gnu
           - name: Linux AArch64 production package
             runner: '["self-hosted","Linux","ARM64","cdm-release"]'
+            artifact: release-linux-aarch64
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ fromJSON(matrix.runner) }}
     defaults:
       run:
@@ -38,14 +68,18 @@ jobs:
         run: ./packaging/prepare-alpine-sources-container.sh
       - name: Compose production release
         env:
-          CDM_CODESIGN_IDENTITY: ${{ secrets.CDM_CODESIGN_IDENTITY }}
+          CDM_CODESIGN_IDENTITY: ${{ runner.os == 'macOS' && secrets.CDM_CODESIGN_IDENTITY || '' }}
+          CDM_NOTARY_PROFILE: ${{ runner.os == 'macOS' && secrets.CDM_NOTARY_PROFILE || '' }}
         run: |
           source packaging/versions.env
           export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-$ALPINE_VERSION"
           ./packaging/package.sh release
       - name: Verify release set
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
         run: |
           target=$(rustc -vV | awk '/^host:/ {print $2}')
+          test "$target" = "$EXPECTED_TARGET"
           version=$(awk -F '"' '/^version =/ {print $2; exit}' Cargo.toml)
           ./packaging/package.sh verify "target/dist/cdm-$version-$target" "$target"
           (
@@ -106,7 +140,109 @@ jobs:
       - name: Upload exact release outputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ matrix.name }}
-          path: rust/target/dist/*
+          name: ${{ matrix.artifact }}
+          path: |
+            rust/target/dist/*.tar.gz
+            rust/target/dist/*.sha256
+            rust/target/dist/*.provenance.intoto.json
+            rust/target/dist/*.notarization.json
           if-no-files-found: error
           retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    if: github.event_name == 'push'
+    needs: compose
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download accepted release outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: release-artifacts
+      - name: Assemble and verify release assets
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import shutil
+
+          version = os.environ["RELEASE_VERSION"].removeprefix("v")
+          root = pathlib.Path("release-artifacts")
+          destination = pathlib.Path("publish-assets")
+          destination.mkdir()
+          targets = (
+              "aarch64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+          )
+          top_level_files = [
+              path
+              for artifact in root.iterdir()
+              if artifact.is_dir()
+              for path in artifact.iterdir()
+              if path.is_file()
+          ]
+          selected = []
+          for target in targets:
+              runtime = f"cdm-{version}-{target}.tar.gz"
+              provenance = f"cdm-{version}-{target}.provenance.intoto.json"
+              source_matches = [
+                  path.name
+                  for path in top_level_files
+                  if path.name.startswith("cdm-vm-sources-")
+                  and path.name.endswith(f"-{target}.tar.gz")
+              ]
+              if len(source_matches) != 1:
+                  raise SystemExit(f"expected one source archive for {target}: {source_matches}")
+              for name in (runtime, provenance, source_matches[0]):
+                  matches = [path for path in top_level_files if path.name == name]
+                  checksum_matches = [
+                      path for path in top_level_files if path.name == f"{name}.sha256"
+                  ]
+                  if len(matches) != 1 or len(checksum_matches) != 1:
+                      raise SystemExit(f"incomplete or duplicate release asset: {name}")
+                  selected.extend((matches[0], checksum_matches[0]))
+              notarization = [
+                  path for path in top_level_files
+                  if path.name == f"{runtime}.notarization.json"
+              ]
+              if len(notarization) > 1:
+                  raise SystemExit(f"duplicate notarization response for {target}")
+              selected.extend(notarization)
+          if len(selected) not in (18, 19):
+              raise SystemExit(f"expected 18 or 19 release files, found {len(selected)}")
+          for source in selected:
+              target = destination / source.name
+              if target.exists():
+                  raise SystemExit(f"duplicate release filename: {source.name}")
+              shutil.copy2(source, target)
+          PY
+          (
+            cd publish-assets
+            for checksum in *.sha256; do
+              sha256sum -c "$checksum"
+            done
+          )
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            test "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" = true
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
+              --title "CDM $GITHUB_REF_NAME"
+          fi
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" publish-assets/* --clobber
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false

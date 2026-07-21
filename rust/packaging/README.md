@@ -12,7 +12,9 @@
 
 Native-only CDM is not restricted to this VM matrix. libkrun supports macOS VM execution only on Apple silicon, so the packager rejects macOS x86_64 rather than producing a misleading artifact. Each architecture gets its own archive; these are not universal binaries.
 
-The macOS AArch64 path has been built, relocated, linked-library inspected, and boot-tested on macOS 26.6. The Linux paths are implemented but were not runtime-validated on that Mac; publish them only after running the same package verification and real VM smoke test on the target Linux architecture and chosen glibc baseline.
+The production GitHub Actions workflow builds each target on its matching host
+architecture and requires package verification, relocation, installation, a real
+VM boot, and the credential-free integration suite before publication.
 
 ## Build
 
@@ -189,16 +191,56 @@ than a long-lived signing secret. Consumers can verify the result with
 public repositories on current plans and for private/internal repositories on
 GitHub Enterprise Cloud.
 
-The manual **Production release composition** workflow runs the metadata tests,
-acquires and verifies Alpine corresponding source, composes the complete release,
-checks dependency closure and relocation, validates every checksum and provenance
-field, then runs the credential-free integration matrix against that exact package
-with both native and VM adapters required. Only accepted outputs are
-cryptographically attested and uploaded. Its
-target-native `cdm-release` runners must
-provide the documented build tools and container runtime. The macOS runner must
-also have its Developer ID certificate installed and receive
-`CDM_CODESIGN_IDENTITY` as a repository secret.
+The **Production release composition** workflow runs the metadata tests, acquires
+and verifies Alpine corresponding source, composes the complete release, checks
+dependency closure and relocation, validates every checksum and provenance field,
+then runs the credential-free integration matrix against that exact package with
+both native and VM adapters required. Only accepted outputs are cryptographically
+attested and uploaded.
+
+A manual workflow run stops after uploading the accepted Actions artifacts. A tag
+push matching `v*` additionally verifies that the tag is exactly `v` plus the
+version in `rust/Cargo.toml`. After all three target jobs succeed, the workflow
+creates a draft GitHub Release, verifies and uploads the complete runtime,
+corresponding-source, provenance, checksum, and optional notarization-response
+asset set, and publishes the release. A failed target
+therefore cannot produce a partial public release. Release binaries are generated
+artifacts and must not be committed to Git.
+
+### GitHub release setup
+
+The workflow uses target-native self-hosted GitHub Actions runners so its real
+libkrun VM acceptance is not weakened to compile-only testing. Register one runner
+for each of these exact label sets:
+
+- `self-hosted`, `macOS`, `ARM64`, `cdm-release`
+- `self-hosted`, `Linux`, `X64`, `cdm-release`
+- `self-hosted`, `Linux`, `ARM64`, `cdm-release`
+
+Each runner needs the build tools documented above, Docker for acquiring exact
+Alpine corresponding source, and the ability to run a real libkrun microVM. Use
+the intended oldest supported glibc baseline for each Linux release runner. Keep
+the runners dedicated and ephemeral where practical because release jobs execute
+repository code.
+
+The macOS runner also needs the Developer ID Application certificate installed in
+its signing keychain. Add a repository Actions secret named
+`CDM_CODESIGN_IDENTITY` containing the exact identity reported by
+`security find-identity -v -p codesigning`. To require Apple notarization, first
+store credentials on that runner with `xcrun notarytool store-credentials`, then
+add the optional `CDM_NOTARY_PROFILE` repository secret containing that keychain
+profile name. With no notary-profile secret, the package is still Developer ID
+signed but is not submitted for notarization.
+
+The publish job alone requests `contents: write`; keep the repository-wide default
+token permission read-only. The repository or organization policy must permit that
+job-level grant. GitHub OIDC supplies the short-lived Sigstore identity used by
+`actions/attest`; no long-lived Linux signing key is required.
+
+For a release, update `rust/Cargo.toml` and `rust/Cargo.lock` together, merge that
+change, then create and push the matching tag. For example, version `0.2.0` must be
+tagged `v0.2.0`. The tag workflow performs all builds, signing, verification,
+attestation, and publication; maintainers do not build or commit release binaries.
 
 ## Install lifecycle
 
