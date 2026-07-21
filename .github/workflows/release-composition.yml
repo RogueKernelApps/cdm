@@ -133,6 +133,7 @@ jobs:
             printf 'CDM_SIGNING_KEYCHAIN=%s\n' "$keychain"
             printf 'CDM_SIGNING_KEYCHAIN_PASSWORD=%s\n' "$keychain_password"
             printf 'CDM_CODESIGN_IDENTITY=%s\n' "$identity"
+            printf 'CDM_CODESIGN_KEYCHAIN=%s\n' "$keychain"
           } >> "$GITHUB_ENV"
           keep_keychain=1
       - name: Verify macOS signing access
@@ -150,7 +151,10 @@ jobs:
             -p "$CDM_SIGNING_KEYCHAIN_PASSWORD" \
             "$CDM_SIGNING_KEYCHAIN"
           cp /usr/bin/true "$probe"
-          codesign --force --timestamp --sign "$CDM_CODESIGN_IDENTITY" "$probe"
+          codesign --force --timestamp \
+            --keychain "$CDM_CODESIGN_KEYCHAIN" \
+            --sign "$CDM_CODESIGN_IDENTITY" \
+            "$probe"
           codesign --verify --strict "$probe"
       - name: Verify packaging metadata
         run: bash packaging/tests.sh

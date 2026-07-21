@@ -395,6 +395,11 @@ rewrite_macos_package() {
     local identity=${CDM_CODESIGN_IDENTITY:--}
     local sign_options=(--force --sign "$identity")
     if [[ "$identity" != "-" ]]; then
+        if [[ -n "${CDM_CODESIGN_KEYCHAIN:-}" ]]; then
+            [[ -f "$CDM_CODESIGN_KEYCHAIN" ]] \
+                || fail "CDM_CODESIGN_KEYCHAIN is not a regular file"
+            sign_options+=(--keychain "$CDM_CODESIGN_KEYCHAIN")
+        fi
         sign_options+=(--options runtime --timestamp)
     fi
     codesign_with_retry "${sign_options[@]}" \

@@ -269,7 +269,10 @@ keychain, derives its non-personal SHA-1 identity from the imported keychain,
 grants only Apple's signing tools access, verifies a timestamped probe signature
 before the expensive build, and deletes the keychain after success or failure.
 It suppresses certificate labels in public action logs and does not depend on the
-runner user's login keychain or a separate identity-name secret.
+runner user's login keychain or a separate identity-name secret. Both the probe
+and package signer pass that disposable keychain explicitly through
+`CDM_CODESIGN_KEYCHAIN`, so signing does not depend on per-user keychain search
+preferences.
 
 To require Apple notarization, store credentials on the runner with
 `xcrun notarytool store-credentials`, then add the optional

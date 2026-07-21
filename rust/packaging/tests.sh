@@ -86,6 +86,8 @@ grep -q 'CDM_NOTARY_PROFILE' "$packaging_dir/package.sh" \
     || fail "optional notarization contract is missing"
 grep -Fq 'codesign_with_retry' "$packaging_dir/package.sh" \
     || fail "Developer ID signing does not retry transient timestamp failures"
+grep -Fq 'CDM_CODESIGN_KEYCHAIN' "$packaging_dir/package.sh" \
+    || fail "Developer ID signing cannot select an ephemeral keychain explicitly"
 grep -q 'owner-approved root LICENSE' "$packaging_dir/package.sh" \
     || fail "production release does not gate missing first-party license terms"
 grep -q 'packaged first-party LICENSE differs' "$packaging_dir/package.sh" \
