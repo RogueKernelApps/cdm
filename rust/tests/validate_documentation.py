@@ -213,6 +213,7 @@ def main() -> int:
         'gh release create "$GITHUB_REF_NAME" --draft',
         'gh release upload "$GITHUB_REF_NAME"',
         'gh release edit "$GITHUB_REF_NAME" --draft=false',
+        'GH_REPO: ${{ github.repository }}',
         'Cleanup release workspace',
         '"$GITHUB_WORKSPACE"/rust/guest-init/target) command -p rm -rf -- "$guest_init_target"',
         'runner: \'"ubuntu-22.04"\'',

@@ -485,6 +485,8 @@ jobs:
     if: github.event_name == 'push'
     needs: [compose, finalize-linux-aarch64]
     runs-on: ubuntu-24.04
+    env:
+      GH_REPO: ${{ github.repository }}
     permissions:
       contents: write
     steps:
