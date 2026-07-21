@@ -265,7 +265,8 @@ Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the
 `CDM_CERTIFICATE_P12` repository Actions secret and its export password as
 `CDM_CERTIFICATE_PASSWORD`. The workflow imports that identity into a run-specific
-keychain, derives its non-personal SHA-1 identity from the imported keychain,
+keychain, selects that keychain as the service account's default for the job,
+derives its non-personal SHA-1 identity from the imported keychain,
 grants only Apple's signing tools access, verifies a timestamped probe signature
 before the expensive build, and deletes the keychain after success or failure.
 It suppresses certificate labels in public action logs and does not depend on the
