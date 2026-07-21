@@ -303,7 +303,7 @@ if has_vm; then
     WS_REPO=$(make_test_repo)
     ORIGINAL_HEAD=$(git -C "$WS_REPO" rev-parse HEAD)
     (cd "$WS_REPO" && "$CDM" --no-proxy --worktree --vm sh -c \
-        'cat file.txt; mkdir -p vm-output; printf "vm-change\n" > vm-output/result.txt') \
+        'cat file.txt; if printf "tampered\n" > .git 2>/dev/null; then exit 90; fi; mkdir -p vm-output; printf "vm-change\n" > vm-output/result.txt') \
         >"$WS_REPO/vm.stdout" 2>"$WS_REPO/vm.stderr"
     STATUS=$?
     VM_BRANCH=$(branch_with_path "$WS_REPO" vm-output/result.txt || true)

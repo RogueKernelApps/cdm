@@ -101,7 +101,31 @@ fn test_build_virtiofs_shares_includes_workdir() {
     cfg.freeze_access().unwrap();
     let shares = build_virtiofs_shares(&cfg).unwrap();
     assert!(!shares.is_empty());
-    assert_eq!(shares[0].tag, TAG_WORKDIR);
+    assert_eq!(shares.last().unwrap().tag, TAG_WORKDIR);
+}
+
+#[test]
+fn writable_workdir_share_follows_read_only_views_of_the_same_host_directory() {
+    let fixture = RootfsFixture::new("workdir-share-order");
+    let gitfile = fixture.root.join(".git");
+    std::fs::write(&gitfile, "gitdir: /tmp/example\n").unwrap();
+    let mut cfg = SandboxConfig::new(Arc::new(CdmConfig::default())).unwrap();
+    cfg.work_dir = fixture.root.clone();
+    cfg.access.add_runtime_deny_write(gitfile);
+    cfg.freeze_access().unwrap();
+
+    let shares = build_virtiofs_shares(&cfg).unwrap();
+    let work_dir = cfg.resolved_access().unwrap().work_dir.to_string_lossy();
+    let matching = shares
+        .iter()
+        .filter(|share| share.host_path == work_dir)
+        .map(|share| (share.tag.as_str(), share.read_only))
+        .collect::<Vec<_>>();
+
+    assert_eq!(matching.len(), 2);
+    assert!(matching[0].0.starts_with("cdm-deny-write-"));
+    assert!(matching[0].1);
+    assert_eq!(matching[1], (TAG_WORKDIR, false));
 }
 
 #[test]

@@ -530,11 +530,11 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
         }
     }
     let mut shares = Vec::new();
-    shares.push(VirtioFsShare {
+    let workdir_share = VirtioFsShare {
         tag: TAG_WORKDIR.to_string(),
         host_path: access.work_dir.to_string_lossy().to_string(),
         read_only: access.workspace == crate::access::WorkspaceAccess::ReadOnly,
-    });
+    };
 
     if let Some(ref stage) = cfg.file_stage {
         shares.push(VirtioFsShare {
@@ -593,6 +593,12 @@ fn build_virtiofs_shares(cfg: &SandboxConfig) -> io::Result<Vec<VirtioFsShare>> 
         }
     }
 
+    // A protected file such as a linked-worktree .git control file exports its
+    // parent as a separate read-only share. libkrun aliases duplicate host
+    // directories to the mode of the last registered share, so register the
+    // writable workspace last. The guest still mounts every protective view
+    // read-only over its specific target.
+    shares.push(workdir_share);
     Ok(shares)
 }
 

@@ -255,6 +255,14 @@ secrets into a disposable keychain instead. The maintained runner layout uses
 `/opt/cdm-github-runners/cdm-linux-arm64` on Linux AArch64 with
 `/opt/cdm-github-runners/home` as its service `HOME`.
 
+The macOS runner must remain a per-user LaunchAgent in the logged-in GUI session.
+After `svc.sh install`, remove the generated plist's `SessionCreate` key before
+starting the service. `SessionCreate` places the runner in a separate security
+session: certificate import and identity discovery still work there, but
+`codesign` cannot access the private key and fails with
+`errSecInternalComponent`. Recheck the plist whenever the runner service is
+reinstalled or upgraded.
+
 The workflow uses a run-specific Cargo home and always removes its Cargo cache,
 package target tree, and temporary release journeys after accepted artifacts have
 been uploaded or after a failed job. The Linux AArch64 acceptance job likewise
