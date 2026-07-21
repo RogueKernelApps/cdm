@@ -125,12 +125,17 @@ jobs:
             "$keychain" >/dev/null
           security list-keychains -d user -s "$keychain"
           security default-keychain -d user -s "$keychain"
-          identity=$(
+          identity_line=$(
             security find-identity -v -p codesigning "$keychain" \
-              | awk '$2 ~ /^[[:xdigit:]]{40}$/ { print $2; exit }'
+              | awk '$2 ~ /^[[:xdigit:]]{40}$/ { print; exit }'
           )
-          [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]]
+          identity_fingerprint=$(awk '{ print $2 }' <<< "$identity_line")
+          [[ "$identity_fingerprint" =~ ^[[:xdigit:]]{40}$ ]]
+          identity=${identity_line#*\"}
+          identity=${identity%\"*}
+          [[ -n "$identity" && "$identity" != "$identity_line" ]]
           echo "::add-mask::$keychain_password"
+          echo "::add-mask::$identity_fingerprint"
           echo "::add-mask::$identity"
           {
             printf 'CDM_SIGNING_KEYCHAIN=%s\n' "$keychain"
