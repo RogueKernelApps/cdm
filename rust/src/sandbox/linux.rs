@@ -41,7 +41,11 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
             add_bind(&mut args, "--ro-bind", path);
         }
     } else {
-        add_bind(&mut args, "--ro-bind", Path::new("/"));
+        // Bind the host root read/write only while Bubblewrap constructs the
+        // namespace. A read-only root here would make later nested writable
+        // binds inherit the read-only mount. Remount the root after restoring
+        // every approved writable path and before the child can run.
+        add_bind(&mut args, "--bind", Path::new("/"));
     }
 
     // Pathname Unix sockets are not isolated by a network namespace. Replace
@@ -96,6 +100,10 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
         for arg in stage.bwrap_args() {
             args.push(arg);
         }
+    }
+    if access.host == crate::access::HostAccess::Normal {
+        args.push("--remount-ro".to_string());
+        args.push("/".to_string());
     }
 
     let mut writable_paths = access.allow_rw.clone();
@@ -306,6 +314,26 @@ fn append_hard_denials(
     for parent in &missing_parents {
         args.push("--tmpfs".to_string());
         args.push(parent.to_string_lossy().into_owned());
+    }
+
+    // A temporary parent bind hides any writable child mount that was added
+    // earlier. Restore those approved descendants before denial overlays are
+    // applied, so the denials remain last while the writable holes survive the
+    // parent's final read-only remount.
+    let mut hidden_writable_descendants = writable_paths
+        .iter()
+        .filter(|path| {
+            temporary_writable_parents
+                .iter()
+                .any(|parent| path != &parent && path.starts_with(parent))
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    hidden_writable_descendants.sort_by_key(|path| path.components().count());
+    for path in hidden_writable_descendants {
+        add_bind(args, "--bind", &path);
     }
 
     // Missing leaves must be materialized while their parent bind is still

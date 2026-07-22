@@ -181,6 +181,39 @@ fn existing_read_only_parent_is_not_rebound_over_writable_descendant_mounts() {
 }
 
 #[test]
+fn temporary_parent_rebind_restores_writable_descendant_before_read_only_remount() {
+    let mut args = Vec::new();
+    let _mountpoints = append_hard_denials(
+        &mut args,
+        &[rule(
+            "/host/.cdm/rootfs",
+            crate::access::DeniedPathKind::Missing,
+            &["/host/.cdm"],
+        )],
+        &[],
+        &denied_nodes(),
+        &[],
+        |_| true,
+        &[std::path::PathBuf::from("/host/writable")],
+    );
+
+    let parent = args
+        .windows(3)
+        .position(|triple| triple == ["--bind", "/host", "/host"])
+        .unwrap();
+    let writable_descendant = args
+        .windows(3)
+        .position(|triple| triple == ["--bind", "/host/writable", "/host/writable"])
+        .unwrap();
+    let parent_remount = args
+        .windows(2)
+        .position(|pair| pair == ["--remount-ro", "/host"])
+        .unwrap();
+    assert!(parent < writable_descendant);
+    assert!(writable_descendant < parent_remount);
+}
+
+#[test]
 fn missing_leaf_below_read_only_parent_uses_the_parent_denial_without_a_placeholder() {
     let mut args = Vec::new();
     let _mountpoints = append_hard_denials(
