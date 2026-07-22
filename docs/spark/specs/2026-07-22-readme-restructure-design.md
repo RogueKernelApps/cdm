@@ -113,7 +113,7 @@ Include a compact matrix that makes composition and implication visible. It shou
 - `--sec`: imply `--scramble`, add persistence protections, and use the deny-first macOS capability baseline
 - `--vm` / `--vmi`: stronger process and daemon containment
 
-The matrix must not imply that `--sec` also enables `--ro`, `--iso`, or `--no-network`; those remain separate controls. Mention that strict destination allowlists require proxied scrambling and that `--no-proxy` disables restoration and domain filtering.
+Present `--sec` prominently as CDM's one-flag hardened baseline for riskier tools: it combines secret scrambling, persistence protections, and the deny-first macOS capability baseline. Keep its boundary equally visible: it does not enable `--ro`, `--iso`, or `--no-network`; those controls compose separately. Include `cdm --sec --iso --ro --no-network ./untrusted-checker` as the stronger example for a potentially hostile command. Mention that strict destination allowlists require proxied scrambling and that `--no-proxy` disables restoration and domain filtering.
 
 ## Related documentation
 
