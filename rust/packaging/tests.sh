@@ -49,6 +49,9 @@ grep -Fq 'RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN:-1.90.0}' "$packaging_dir/guest-in
 bash -n "$packaging_dir/install.sh"
 bash -n "$packaging_dir/check-upstream.sh"
 bash -n "$packaging_dir/prepare-alpine-sources-container.sh"
+grep -Fq 'abuild git python3 su-exec wget' \
+    "$packaging_dir/prepare-alpine-sources-container.sh" \
+    || fail "Alpine source acquisition must use GNU wget for upstream compatibility"
 sh -n "$packaging_dir/fetch-alpine-sources.sh"
 python3 -c 'compile(open(__import__("sys").argv[1], encoding="utf-8").read(), __import__("sys").argv[1], "exec")' \
     "$packaging_dir/create-archive.py"

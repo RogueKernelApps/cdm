@@ -39,8 +39,8 @@ export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.7"
 ./packaging/package.sh release  # runtime and verified corresponding source
 ./packaging/package.sh runtime  # local validation only; do not redistribute alone
 ./packaging/package.sh sources  # incomplete unless CDM_ALPINE_SOURCE_DIR is set
-./packaging/package.sh verify-runtime target/dist/cdm-0.1.3-aarch64-apple-darwin aarch64-apple-darwin
-./packaging/package.sh verify target/dist/cdm-0.1.3-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
+./packaging/package.sh verify-runtime target/dist/cdm-0.1.4-aarch64-apple-darwin aarch64-apple-darwin
+./packaging/package.sh verify target/dist/cdm-0.1.4-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
 ```
 
 The output and adjacent `.sha256` files are under `target/dist/`. Downloads and upstream builds are cached under `target/package-work/` and remain ignored by Git.
@@ -157,9 +157,11 @@ and runs `abuild fetch` (with three bounded attempts for transient network
 failure) followed by `abuild verify` with a package-private `SRCDEST`. Any
 checkout, version, exhausted download, checksum, coverage, or manifest
 failure removes only the newly created output and exits unsuccessfully.
+The container installs GNU Wget rather than relying on the BusyBox applet because
+some pinned upstream source hosts reject BusyBox Wget requests.
 
-To run without Docker, install `abuild`, `git`, and `python3` in an exact Alpine
-3.21.7 environment and invoke the Alpine-native tool directly:
+To run without Docker, install `abuild`, `git`, `python3`, and GNU `wget` in an
+exact Alpine 3.21.7 environment and invoke the Alpine-native tool directly:
 
 ```sh
 packaging/fetch-alpine-sources.sh \

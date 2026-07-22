@@ -26,7 +26,7 @@ mod stage;
 mod trusted_exec;
 mod worktree;
 
-const VERSION: &str = "0.1.3";
+const VERSION: &str = "0.1.4";
 
 fn main() {
     let exit_code = run();

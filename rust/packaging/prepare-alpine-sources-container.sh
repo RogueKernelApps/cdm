@@ -30,7 +30,7 @@ docker run --rm \
     --volume "$output_parent:/output" \
     "$ALPINE_SOURCE_IMAGE" \
     sh -eu -c '
-        apk add --no-cache abuild git python3 su-exec >/dev/null
+        apk add --no-cache abuild git python3 su-exec wget >/dev/null
         export HOME=/tmp/cdm-source-builder
         mkdir -p "$HOME"
         chown "$HOST_UID:$HOST_GID" "$HOME"

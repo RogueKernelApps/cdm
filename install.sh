@@ -19,7 +19,7 @@ Usage: install.sh [PREFIX]
 
 Downloads the latest CDM release for this operating system and architecture.
 The default prefix is $HOME/.local. Set CDM_INSTALL_VERSION to install a
-specific release, for example CDM_INSTALL_VERSION=v0.1.3.
+specific release, for example CDM_INSTALL_VERSION=v0.1.4.
 EOF
 }
 
