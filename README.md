@@ -1,16 +1,83 @@
 # CDM
 
-CDM runs developer commands inside a host-native sandbox (Apple Seatbelt on
-macOS or Bubblewrap on Linux) or an optional libkrun microVM. It can restrict
-filesystem and network access, substitute fake values for detected secrets,
-and restore real values only through a per-invocation HTTP(S) proxy.
+> **Give coding agents room to work—without giving them your whole machine.**
 
-> [!WARNING]
-> CDM's defaults prioritize compatibility, not strong isolation. By default the
-> workspace is writable, other host user data is readable, networking is
-> direct, and secrets are unchanged. This is useful for preventing accidental
-> writes outside a project, but it is not an appropriate boundary for hostile
-> code. Use the hardening flags below when the command is not trusted.
+CDM runs developer commands inside a host-native sandbox or an optional
+libkrun microVM. Put `cdm` before an ordinary command, then add filesystem,
+network, secret, or Git-worktree isolation when the command needs it.
+
+## Start with any command
+
+```bash
+cd ~/my_dev_project/
+
+cdm copilot --allow-all
+cdm pi
+cdm claude
+```
+
+The command after `cdm` keeps its original argument boundaries. In the first
+example, `--allow-all` is passed to Copilot—not interpreted by CDM. The same
+pattern works with package managers, test runners, scripts, and other developer
+tools:
+
+```bash
+cdm npm test
+cdm python3 ./project_acme/audit.py
+```
+
+### Run inside a microVM
+
+```bash
+cdm --vm sh -c 'uname -a'
+cdm --vmi ubuntu:24.04 bash
+```
+
+`--vm` uses CDM's bundled Alpine guest. `--vmi` starts from an OCI image. Only
+the workspace and explicit grants are exposed to the guest.
+
+### Let CDM handle the worktree
+
+```bash
+cdm --worktree claude
+```
+
+**No checkout juggling.** CDM copies the current Git-visible working state into
+a temporary worktree, lets the agent edit it, and saves the result on a unique
+`CDM__...` branch. The original checkout stays untouched, and useful changes
+survive even when the command exits nonzero.
+
+### Add only the controls you need
+
+| Command | Outcome |
+|---|---|
+| `cdm --ro claude` | Let the agent inspect the project without changing it. |
+| `cdm --iso --ro ./untrusted-checker` | Hide other host user data and make the project read-only. |
+| `cdm --no-network python3 ./project_acme/audit.py` | Run a script without network access. |
+| `cdm --sec claude` | Apply CDM's one-flag hardened baseline. |
+| `cdm --sec --worktree claude` | Combine the hardened baseline with an isolated Git workflow. |
+| `cdm --sec --iso --ro --no-network ./untrusted-checker` | Compose the strongest native controls for a potentially hostile command. |
+
+Need to expose one specific path? Start isolated, then grant only what the tool
+needs:
+
+```bash
+cdm --iso \
+  --allow-ro ~/.config/tool \
+  --allow-rw ./project_acme/output \
+  tool
+```
+
+### Sandbox a macOS application
+
+```bash
+cdm "/Applications/Example.app"
+```
+
+CDM validates the app bundle and infers narrow, app-owned writable locations
+instead of granting broad home-directory access. Selecting the bundle is the
+trust decision: CDM does not run Gatekeeper, notarization, or code-signature
+checks.
 
 ## Install
 
@@ -19,107 +86,88 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
 ```
 
-The installer detects macOS Apple silicon, Linux x86_64, or Linux ARM64,
-downloads the matching runtime, verifies it against the release's
-`SHA256SUMS`, and installs it under `$HOME/.local`. Ensure `$HOME/.local/bin` is
-on `PATH`. Set `CDM_INSTALL_PREFIX` to choose another prefix or
-`CDM_INSTALL_VERSION` to pin a release.
+The installer supports macOS 14+ on Apple silicon, Linux x86_64, and Linux
+ARM64. It downloads the matching runtime, verifies it against the release's
+`SHA256SUMS`, and installs it under `$HOME/.local`. Ensure
+`$HOME/.local/bin` is on `PATH`.
 
-To install manually, open the [latest release](https://github.com/RogueKernelApps/cdm/releases/latest)
-and download exactly one runtime archive:
+Set `CDM_INSTALL_PREFIX` to choose another prefix or `CDM_INSTALL_VERSION` to
+pin a release. See [Getting started](GETTING_STARTED.md) for manual installation,
+version pinning, source builds, and artifact verification, or open the
+[latest release](https://github.com/RogueKernelApps/cdm/releases/latest).
 
-| System | Runtime asset |
-|---|---|
-| macOS 14+ on Apple silicon | `cdm-<version>-macos-arm64.tar.gz` |
-| Linux x86_64 | `cdm-<version>-linux-x86_64.tar.gz` |
-| Linux ARM64 | `cdm-<version>-linux-arm64.tar.gz` |
+## Security
 
-Extract it and run the included `install.sh`. The `source` archives satisfy
-the bundled VM firmware's corresponding-source license requirements; users do
-not need them to install or run CDM. `SHA256SUMS` supports download verification,
-and the verification archive contains optional provenance and Sigstore evidence.
+> [!WARNING]
+> Plain `cdm command` prioritizes compatibility: the workspace is writable,
+> other host user data is readable, networking is direct, and secrets are
+> unchanged. It mainly prevents accidental writes outside the project; it is
+> not an appropriate boundary for hostile code.
 
-## Quick start
+CDM's controls compose. The table shows what each control changes when added to
+the defaults:
+
+| Control | Workspace | Other host data | Network | Secrets | Additional effect |
+|---|---|---|---|---|---|
+| plain `cdm` | read/write | readable | direct | unchanged | Prevents writes outside allowed roots. |
+| `--ro` | read-only | readable | direct | unchanged | Protects project files. |
+| `--iso` | read/write | hidden except grants | direct | unchanged | Uses an isolated host-data policy. |
+| `--no-network` | read/write | readable | disabled | unchanged | Removes network access. |
+| `--scramble` | read/write | readable | proxied by default | fake in child | Hides and stages known credential files. |
+| `--sec` | read/write | readable | proxied by default | fake in child | Implies `--scramble` and adds persistence protections. |
+| `--vm` / `--vmi` | guest sees workspace and grants | not exposed to guest | follows selected policy | unchanged unless scrambling is selected | Adds stronger process and daemon containment. |
+
+`--sec` is the easy one-flag baseline for riskier tools: it combines secret
+scrambling, persistence protections, and the deny-first macOS capability
+baseline. It does **not** imply `--ro`, `--iso`, or `--no-network`; add those
+when the command should not write the project, read other host data, or use the
+network.
+
+With `--scramble` or `--sec`, the child receives stable fake secrets. Real
+mappings stay in the trusted host process and CDM's fail-closed HTTP(S) proxy
+restores them only for authorized destinations. Use an allowlist for a strict
+destination set:
 
 ```bash
-cdm npm test
+cdm --scramble \
+  --allow-domains registry.npmjs.org \
+  npm install
 ```
 
-CDM preserves argument boundaries exactly; it never joins or reparses argv.
-Request shell syntax explicitly when needed:
-
-```bash
-cdm sh -c 'printf "%s\n" "$HOME" | sort'
-```
-
-## Features
-
-| Feature | Command | What it does |
-|---|---|---|
-| Default sandbox | `cdm npm test` | Workspace read/write, other host data read-only, direct network |
-| Read-only workspace | `cdm --ro npm test` | Prevents the command from changing project files |
-| Host-data isolation | `cdm --iso --ro ./tool` | Hides host user data except the workspace and explicit grants |
-| Explicit grants | `cdm --iso --allow-ro ~/.config/tool --allow-rw ./output tool` | Reopens only the named paths |
-| No network | `cdm --no-network python3 script.py` | Denies network access |
-| Secret scrambling | `cdm --scramble npm install` | Replaces detected secrets with stable-per-invocation fakes and uses the fail-closed proxy |
-| Destination policy | `cdm --scramble --allow-domains registry.npmjs.org npm install` | Restricts proxied egress to an allowlist |
-| Direct network while scrambling | `cdm --scramble --no-proxy tool` | Keeps fake values but disables restoration and domain filtering |
-| Hardened mode | `cdm --sec ./untrusted-checker` | Implies scrambling and adds persistence protections; uses deny-first capabilities on macOS |
-| Temporary Git worktree | `cdm --worktree agent` | Runs in an isolated worktree and saves changes to a generated `CDM__...` branch |
-| macOS application mode | `cdm "/Applications/Example.app"` | Validates the bundle and infers narrow app-owned writable paths |
-| Session report | `cdm --report-json .cdm-session.json --stats npm test` | Writes a redacted JSON report and compact stderr statistics |
-| Denial monitor | `cdm --monitor npm test` | Streams platform sandbox denials; setup is fail-closed |
-| MicroVM | `cdm --vm echo hello` | Uses the bundled Alpine guest in a VM-enabled package |
-| OCI guest | `cdm --vmi ubuntu:24.04 bash` | Runs with an OCI image in a VM-enabled package |
-| Shell completion | `cdm completions zsh > ~/.zfunc/_cdm` | Generates completion from the typed CLI |
-
-Typical startup output summarizes the selected controls without printing the
-wrapped arguments or secret values:
-
-```text
-[cdm] sandbox: seatbelt (darwin)
-[cdm] network: proxied (port 18080, MITM)
-[cdm] running: <2 argv entries>
-```
-
-## Choosing a security level
-
-The controls are separate so you can apply only what a command needs:
-
-- `--ro` protects the workspace from writes.
-- `--iso` hides other host user data and, on macOS, requires a deny-first
-  capability profile.
-- `--no-network` removes network access.
-- `--scramble` discovers secrets, hides known credential files, substitutes
-  fake values, and normally enables the fail-closed proxy. Proxied mode also
-  uses the deny-first macOS capability baseline. Add `--no-proxy` only when
-  direct networking is required and secret restoration/domain filtering are
-  not.
-- `--sec` implies `--scramble` and adds hard write denials for shell profiles,
-  Git and SSH control files, cron state, agent/editor hooks, and active control
-  files at the workspace root.
-- `--vm` or `--vmi` provides stronger process and daemon containment than the
-  native adapters.
-
-These controls are not all defaults because deny-first macOS policy can break
-desktop/WebKit applications, proxy interception is incompatible with some
-protocols and certificate-pinning schemes, read-only workspaces break normal
-build/install workflows, and VMs require additional runtime support. Choose
-compatibility deliberately; do not mistake it for confinement.
-
-The preflight command guard is only an accident-prevention convenience. A
-child can launch another executable after startup. Use filesystem, network,
-and VM controls for enforcement.
+`--no-proxy` keeps direct networking while scrambling, but disables secret
+restoration and domain filtering. The command preflight is only accident
+prevention; filesystem, network, and VM controls provide the enforceable
+boundaries.
 
 ## Configuration
 
 `cdm config` creates `~/.cdm/config.json`. CDM also discovers the nearest
 project `.cdm/config.json`, but ignores it until its exact bytes are approved
 with `cdm trust`. `cdm project` reports the discovered project without granting
-access. Named global presets are selected with repeatable `--preset <name>`.
+access. Repeat `--preset <name>` to apply named global presets.
 
-See [Getting started](GETTING_STARTED.md) for installation, configuration,
-examples, and integration testing.
+## Reports and monitoring
+
+```bash
+cdm --report-json .cdm-session.json --stats npm test
+cdm --monitor npm test
+```
+
+Reports contain bounded, redacted policy and lifecycle data—not arguments,
+paths, domains, environment values, or secret material. `--monitor` streams
+platform sandbox denials and fails closed if monitoring cannot start.
+
+## Documentation
+
+- [Getting started](GETTING_STARTED.md) — detailed installation and usage
+- [Architecture](ARCHITECTURE.md) — runtime boundaries and trust model
+- [Specification](specs/SPEC.md) — normative behavior
+- [Dependencies](DEPENDENCIES.md) — pinned runtime and vendored dependency notes
+- [Test organization](rust/tests/README.md) — unit and integration coverage
+- [Packaging](rust/packaging/README.md) — release and corresponding-source runbook
+- [Security policy](SECURITY.md) — supported scope and private reporting
+- [Future work](FUTURE.md) — known gaps and planned work
+- [Agent instructions](AGENTS.md) — repository contribution constraints for coding agents
 
 ## Build and release status
 
@@ -139,25 +187,9 @@ cd rust
 ./packaging/package.sh runtime
 ```
 
-Production releases are composed on target-native macOS AArch64, Linux x86_64,
-and Linux AArch64 GitHub Actions runners. Every target must pass package,
-relocation, installation, real-VM, and integration acceptance before the workflow
-attests the artifacts and publishes a GitHub Release. See the
-[packaging and release runbook](rust/packaging/README.md) for runner, signing, and
-tagging requirements. Remaining non-release work is tracked in
-[`rust/guest-init/INTEGRATION.md`](rust/guest-init/INTEGRATION.md) and
-[FUTURE.md](FUTURE.md).
-
-## Documentation
-
-- [Getting started](GETTING_STARTED.md) — detailed installation and usage
-- [Architecture](ARCHITECTURE.md) — runtime boundaries and trust model
-- [Specification](specs/SPEC.md) — normative behavior
-- [Dependencies](DEPENDENCIES.md) — pinned runtime and vendored dependency notes
-- [Test organization](rust/tests/README.md) — unit and integration coverage
-- [Packaging](rust/packaging/README.md) — release and corresponding-source runbook
-- [Security policy](SECURITY.md) — supported scope and private reporting
-- [Future work](FUTURE.md) — known gaps and planned work
-- [Agent instructions](AGENTS.md) — repository contribution constraints for coding agents
+Production releases are built and tested on target-native macOS AArch64, Linux
+x86_64, and Linux AArch64 runners. See the
+[packaging and release runbook](rust/packaging/README.md) for signing, testing,
+and source-distribution requirements.
 
 CDM is licensed under the [MIT License](LICENSE).
