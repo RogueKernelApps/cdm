@@ -519,7 +519,6 @@ mod tests {
         let backend_value = quoted_value(backend);
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("Backend:          \"seatbelt\""));
         assert!(output.contains("flags: `--vm | --vmi IMAGE`"));
         assert_eq!(
             output,

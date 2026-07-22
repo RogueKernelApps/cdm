@@ -95,9 +95,11 @@ if has_native; then
     section "Status Output"
 
     STATUS_STDERR=$(cd "$FIXTURE" && "$CDM" true 2>&1 >/dev/null)
+    STATUS_BACKEND=$(native_adapter)
     check "status: startup uses the compact tree" "$STATUS_STDERR" 'cdm'
     check "status: startup groups the native sandbox" "$STATUS_STDERR" '├─ Sandbox:'
-    check "status: startup distinguishes backend field and value" "$STATUS_STDERR" '└─ Backend:          "seatbelt"'
+    check "status: startup distinguishes backend field and value" \
+        "$STATUS_STDERR" "└─ Backend:          \"$STATUS_BACKEND\""
     check "status: startup groups file permissions" "$STATUS_STDERR" '├─ File permissions:'
     check "status: startup reports the resolved workspace mode" "$STATUS_STDERR" '├─ Workspace:        "rw"'
     check "status: startup reports default provenance" "$STATUS_STDERR" 'flags: `--ro`                          [default]'
