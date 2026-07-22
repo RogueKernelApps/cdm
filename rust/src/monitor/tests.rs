@@ -85,6 +85,13 @@ fn hostile_path_is_only_an_osascript_argument() {
     assert!(OPEN_TERMINAL_SCRIPT.contains("quoted form of logPath"));
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn terminal_launcher_returns_the_created_front_window() {
+    assert!(OPEN_TERMINAL_SCRIPT.contains("return id of front window"));
+    assert!(!OPEN_TERMINAL_SCRIPT.contains("window of tabRef"));
+}
+
 #[test]
 fn monitor_helper_environment_is_allowlisted() {
     let mut command = Command::new("/usr/bin/env");

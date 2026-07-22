@@ -9,13 +9,14 @@ use std::io;
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use crate::{access, monitor, network, proxy, report, sandbox, worktree};
+use crate::{access, monitor, network, proxy, report, sandbox, status, worktree};
 
 pub(super) struct InvocationLifecycle {
     runtime: Option<RuntimeCleanup>,
     worktree: Option<worktree::WorktreeInfo>,
     proxy: Option<proxy::ProxySession>,
     monitor: Option<monitor::Monitor>,
+    status: status::Status,
     // Keep the fail-safe publisher last so resource Drop implementations run
     // before an early-return report is emitted.
     report: InvocationReport,
@@ -25,6 +26,7 @@ impl InvocationLifecycle {
     pub(super) fn provisional(
         destination: Option<report::ReportDestination>,
         stats_requested: bool,
+        quiet: bool,
         requested_backend: report::Backend,
         argument_count: u64,
     ) -> Self {
@@ -38,6 +40,7 @@ impl InvocationLifecycle {
             worktree: None,
             proxy: None,
             monitor: None,
+            status: status::Status::new(quiet),
             report: InvocationReport::new(
                 destination,
                 stats_requested,
@@ -183,6 +186,8 @@ impl InvocationLifecycle {
     /// publication failure upgrades a successful child exit to failure while
     /// preserving an existing non-zero child exit code.
     pub(super) fn complete(mut self, mut exit_code: i32, sensitive_values: Vec<String>) -> i32 {
+        let child_exit_code = exit_code;
+        let mut completed_worktree = None;
         self.report.report.record_phase(
             self.elapsed_ms(),
             report::LifecyclePhase::Cleanup,
@@ -206,14 +211,10 @@ impl InvocationLifecycle {
                 report::LifecyclePhase::Worktree,
                 report::PhaseState::Started,
             );
-            eprintln!(
-                "[cdm] worktree: finalizing {}...",
-                worktree.worktree_dir.display()
-            );
             match worktree::finalize_worktree(&worktree) {
                 Ok(result) => {
                     self.report.report.outcome.worktree = report_worktree_outcome(&result);
-                    worktree::print_summary(&result);
+                    completed_worktree = Some(result);
                     self.report.report.record_phase(
                         self.elapsed_ms(),
                         report::LifecyclePhase::Worktree,
@@ -259,6 +260,11 @@ impl InvocationLifecycle {
         self.report.set_sensitive_values(sensitive_values);
         if self.report.publish() {
             exit_code = preserve_failure(exit_code);
+        }
+        if let Some(result) = completed_worktree {
+            self.status.worktree_result(&result, child_exit_code);
+        } else if child_exit_code != 0 {
+            self.status.failure(child_exit_code);
         }
         exit_code
     }
@@ -612,7 +618,7 @@ mod tests {
             std::env::temp_dir().join(format!("cdm-runtime-cleanup-file-{}", std::process::id()));
         std::fs::write(&path, "not a directory").unwrap();
         let mut lifecycle =
-            super::InvocationLifecycle::provisional(None, false, Backend::Seatbelt, 1);
+            super::InvocationLifecycle::provisional(None, false, false, Backend::Seatbelt, 1);
         lifecycle.attach_runtime(path.clone());
 
         let exit_code = lifecycle.complete(0, Vec::new());

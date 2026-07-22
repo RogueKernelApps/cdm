@@ -293,13 +293,16 @@ fn push_unlink_anchors(profile: &mut String, path: &std::path::Path) {
 }
 
 fn macos_path_alias(path: &std::path::Path) -> Option<PathBuf> {
-    for (canonical_root, alias_root) in [
+    for (physical_root, public_root) in [
         ("/private/tmp", "/tmp"),
         ("/private/var", "/var"),
         ("/private/etc", "/etc"),
     ] {
-        if let Ok(suffix) = path.strip_prefix(canonical_root) {
-            return Some(PathBuf::from(alias_root).join(suffix));
+        if let Ok(suffix) = path.strip_prefix(physical_root) {
+            return Some(PathBuf::from(public_root).join(suffix));
+        }
+        if let Ok(suffix) = path.strip_prefix(public_root) {
+            return Some(PathBuf::from(physical_root).join(suffix));
         }
     }
     None

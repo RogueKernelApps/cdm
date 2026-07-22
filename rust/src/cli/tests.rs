@@ -35,8 +35,19 @@ fn preserves_non_utf8_command_arguments() {
 }
 
 #[test]
-fn rejects_conflicting_workspace_modes() {
-    assert!(parse(strings(&["--rw", "--ro", "echo"])).is_err());
+fn parses_short_path_grants() {
+    let Action::Run(run) = parse(strings(&[
+        "-r", "config", "-w", "output", "-r", "cache", "echo",
+    ]))
+    .unwrap() else {
+        panic!("expected run");
+    };
+    assert_eq!(
+        run.allow_ro,
+        [PathBuf::from("config"), PathBuf::from("cache")]
+    );
+    assert_eq!(run.allow_rw, [PathBuf::from("output")]);
+    assert_eq!(run.command, strings(&["echo"]));
 }
 
 #[test]
@@ -86,6 +97,29 @@ fn parses_repeatable_presets_in_order() {
 }
 
 #[test]
+fn parses_repeatable_profiles_in_order_without_consuming_the_command() {
+    let Action::Run(run) = parse(strings(&[
+        "--profile",
+        "pi",
+        "--profile",
+        "claude",
+        "printf",
+        "--literal",
+    ]))
+    .unwrap() else {
+        panic!("expected run");
+    };
+    assert_eq!(run.profile, ["pi", "claude"]);
+    assert_eq!(run.command, strings(&["printf", "--literal"]));
+}
+
+#[test]
+fn parses_setup_as_an_argument_free_builtin() {
+    assert_eq!(parse(strings(&["setup"])).unwrap(), Action::Setup);
+    assert!(parse(strings(&["setup", "extra"])).is_err());
+}
+
+#[test]
 fn parses_structured_report_options_without_consuming_the_command() {
     let Action::Run(run) = parse(strings(&[
         "--report-json",
@@ -118,7 +152,10 @@ fn generates_completions_from_the_typed_command() {
         assert!(!output.contains("--workspace"));
         assert!(output.contains("report-json"));
         assert!(output.contains("stats"));
+        assert!(output.contains("quiet"));
         assert!(output.contains("preset"));
+        assert!(output.contains("profile"));
+        assert!(output.contains("setup"));
         assert!(output.contains("trust"));
         assert!(output.contains("project"));
     }
@@ -138,13 +175,22 @@ fn completion_tree_assigns_run_flags_to_the_run_subcommand() {
         .any(|argument| argument.get_id() == "preset"));
     assert!(run
         .get_arguments()
+        .any(|argument| argument.get_id() == "profile"));
+    assert!(run
+        .get_arguments()
         .any(|argument| argument.get_id() == "report_json"));
+    let setup = command
+        .find_subcommand("setup")
+        .expect("setup subcommand must be present");
+    assert!(!setup
+        .get_arguments()
+        .any(|argument| argument.get_id() == "profile"));
 }
 
 #[test]
 fn completion_tree_describes_builtin_commands_and_shell_values() {
     let command = completion_command();
-    for name in ["config", "trust", "project", "version"] {
+    for name in ["config", "setup", "trust", "project", "version"] {
         assert!(command.find_subcommand(name).is_some(), "missing {name}");
     }
 
@@ -177,10 +223,30 @@ fn generated_help_documents_structured_report_options() {
     let output = String::from_utf8(output).unwrap();
     assert!(output.contains("--report-json <PATH>"));
     assert!(output.contains("--stats"));
+    assert!(output.contains("-q, --quiet"));
     assert!(output.contains("stderr"));
     assert!(output.contains("--preset <NAME>"));
+    assert!(output.contains("--profile <ID>"));
+    assert!(output.contains("cdm setup"));
+    assert!(output.contains("Interactively enable detected coding-harness profiles"));
+    assert!(output.contains("pi, claude, codex, copilot"));
+    assert!(output.contains("read/write is the default"));
     assert!(output.contains("cdm trust"));
     assert!(output.contains("cdm project"));
+}
+
+#[test]
+fn parses_short_and_long_quiet_flags() {
+    let Action::Run(short) = parse(strings(&["-q", "true"])).unwrap() else {
+        panic!("expected run");
+    };
+    let Action::Run(long) = parse(strings(&["--quiet", "true"])).unwrap() else {
+        panic!("expected run");
+    };
+    assert!(short.quiet);
+    assert!(long.quiet);
+    assert_eq!(short.command, strings(&["true"]));
+    assert_eq!(long.command, strings(&["true"]));
 }
 
 #[test]

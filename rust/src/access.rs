@@ -3,6 +3,7 @@
 #[cfg(test)]
 use crate::config::PathsConfig;
 use crate::config::{ConfiguredPath, ConfiguredPaths};
+use crate::origin::Origin;
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -21,6 +22,7 @@ pub enum HostAccess {
     Isolated,
 }
 
+#[cfg(test)]
 impl HostAccess {
     pub fn label(self) -> &'static str {
         match self {
@@ -51,7 +53,7 @@ pub struct AccessPolicy {
     cli_allow_ro: Vec<PathBuf>,
     cli_allow_rw: Vec<PathBuf>,
     discovered_allow_ro: Vec<PathBuf>,
-    discovered_allow_rw: Vec<PathBuf>,
+    discovered_allow_rw: Vec<(PathBuf, Option<String>)>,
     runtime_deny_write: Vec<PathBuf>,
 }
 
@@ -62,6 +64,8 @@ pub struct ResolvedAccessPolicy {
     pub work_dir: PathBuf,
     pub allow_ro: Vec<PathBuf>,
     pub allow_rw: Vec<PathBuf>,
+    pub allow_ro_grants: Vec<ResolvedGrant>,
+    pub allow_rw_grants: Vec<ResolvedGrant>,
     pub deny_read_rules: Vec<ResolvedDenyRule>,
     pub deny_write_rules: Vec<ResolvedDenyRule>,
     pub runtime_ro: Vec<PathBuf>,
@@ -75,6 +79,13 @@ pub struct ResolvedAccessPolicy {
     /// Canonical, ancestor-collapsed mount targets captured with the policy.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub synthetic_mounts: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedGrant {
+    pub path: PathBuf,
+    pub origins: Vec<Origin>,
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -190,6 +201,7 @@ impl AccessPolicy {
                 .map(|value| ConfiguredPath {
                     value: value.clone(),
                     relative_to: PathBuf::new(),
+                    origin: crate::origin::Origin::Default,
                 })
                 .collect()
         };
@@ -244,8 +256,8 @@ impl AccessPolicy {
         self.discovered_allow_ro.push(path);
     }
 
-    pub(crate) fn add_discovered_rw(&mut self, path: PathBuf) {
-        self.discovered_allow_rw.push(path);
+    pub(crate) fn add_discovered_rw(&mut self, path: PathBuf, evidence: Option<String>) {
+        self.discovered_allow_rw.push((path, evidence));
     }
 
     /// Adds an invocation-owned control path that the sandboxed child must
@@ -264,34 +276,55 @@ impl AccessPolicy {
         let work_dir = canonicalize_required(work_dir, "workspace")?;
         let home_dir = canonicalize_required(home_dir, "home directory")?;
 
-        let mut allow_ro = resolve_grants(
+        let mut allow_ro_grants = resolve_sourced_grants(
             self.config_allow_ro
                 .iter()
-                .map(|path| resolve_config_path(path, &home_dir))
+                .map(|path| (resolve_config_path(path, &home_dir), path.origin.clone()))
                 .chain(
                     self.cli_allow_ro
                         .iter()
-                        .map(|path| resolve_path(path, &work_dir, &home_dir)),
+                        .map(|path| (resolve_path(path, &work_dir, &home_dir), Origin::Cli)),
                 ),
             &work_dir,
         )?;
-        let mut allow_rw = resolve_grants(
+        let mut allow_rw_grants = resolve_sourced_grants(
             self.config_allow_rw
                 .iter()
-                .map(|path| resolve_config_path(path, &home_dir))
+                .map(|path| (resolve_config_path(path, &home_dir), path.origin.clone()))
                 .chain(
                     self.cli_allow_rw
                         .iter()
-                        .map(|path| resolve_path(path, &work_dir, &home_dir)),
+                        .map(|path| (resolve_path(path, &work_dir, &home_dir), Origin::Cli)),
                 ),
             &work_dir,
         )?;
-        dedup_paths(&mut allow_ro);
-        dedup_paths(&mut allow_rw);
-        allow_ro.extend(self.discovered_allow_ro.iter().cloned());
-        allow_rw.extend(self.discovered_allow_rw.iter().cloned());
-        normalize_existing_paths(&mut allow_ro);
-        normalize_existing_paths(&mut allow_rw);
+        allow_ro_grants.extend(self.discovered_allow_ro.iter().cloned().map(|path| {
+            ResolvedGrant {
+                path: normalize_existing_path(path),
+                origins: vec![Origin::App],
+                evidence: Vec::new(),
+            }
+        }));
+        allow_rw_grants.extend(
+            self.discovered_allow_rw
+                .iter()
+                .cloned()
+                .map(|(path, evidence)| ResolvedGrant {
+                    path: normalize_existing_path(path),
+                    origins: vec![Origin::App],
+                    evidence: evidence.into_iter().collect(),
+                }),
+        );
+        dedup_grants(&mut allow_ro_grants);
+        dedup_grants(&mut allow_rw_grants);
+        let allow_ro = allow_ro_grants
+            .iter()
+            .map(|grant| grant.path.clone())
+            .collect::<Vec<_>>();
+        let allow_rw = allow_rw_grants
+            .iter()
+            .map(|grant| grant.path.clone())
+            .collect::<Vec<_>>();
 
         let cache_root = effective_cache_root(&home_dir)?;
         let mut deny_sources = resolve_optional_paths(&self.config_deny_read, &home_dir)
@@ -418,6 +451,8 @@ impl AccessPolicy {
             work_dir,
             allow_ro,
             allow_rw,
+            allow_ro_grants,
+            allow_rw_grants,
             deny_read_rules,
             deny_write_rules,
             runtime_ro,
@@ -448,7 +483,11 @@ impl AccessPolicy {
                     .map(|grant| resolve_path(grant, work_dir, home_dir)),
             )
             .chain(self.discovered_allow_ro.iter().cloned())
-            .chain(self.discovered_allow_rw.iter().cloned())
+            .chain(
+                self.discovered_allow_rw
+                    .iter()
+                    .map(|(path, _)| path.clone()),
+            )
             .filter_map(|grant| grant.canonicalize().ok())
             .any(|grant| path == grant || path.starts_with(grant))
     }
@@ -714,6 +753,27 @@ fn resolve_grants(
         .collect()
 }
 
+fn resolve_sourced_grants(
+    grants: impl IntoIterator<Item = (PathBuf, Origin)>,
+    work_dir: &Path,
+) -> io::Result<Vec<ResolvedGrant>> {
+    let mut resolved = Vec::new();
+    for (path, origin) in grants {
+        match resolve_grants(std::iter::once(path), work_dir) {
+            Ok(mut paths) => resolved.push(ResolvedGrant {
+                path: paths.pop().expect("one grant resolves to one path"),
+                origins: vec![origin],
+                evidence: Vec::new(),
+            }),
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && matches!(origin, Origin::Profile(_)) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(resolved)
+}
+
 fn resolve_optional_paths(values: &[ConfiguredPath], home_dir: &Path) -> Vec<PathBuf> {
     values
         .iter()
@@ -762,15 +822,9 @@ fn canonicalize_required(path: &Path, label: &str) -> io::Result<PathBuf> {
     })
 }
 
-fn normalize_existing_paths(paths: &mut Vec<PathBuf>) {
-    for path in paths.iter_mut() {
-        if let Ok(canonical) = path.canonicalize() {
-            *path = canonical;
-        } else {
-            *path = lexical_normalize(path);
-        }
-    }
-    dedup_paths(paths);
+fn normalize_existing_path(path: PathBuf) -> PathBuf {
+    path.canonicalize()
+        .unwrap_or_else(|_| lexical_normalize(&path))
 }
 
 fn lexical_normalize(path: &Path) -> PathBuf {
@@ -790,6 +844,31 @@ fn lexical_normalize(path: &Path) -> PathBuf {
 fn dedup_paths(paths: &mut Vec<PathBuf>) {
     paths.sort();
     paths.dedup();
+}
+
+fn dedup_grants(grants: &mut Vec<ResolvedGrant>) {
+    let mut by_path: BTreeMap<PathBuf, ResolvedGrant> = BTreeMap::new();
+    for grant in grants.drain(..) {
+        match by_path.entry(grant.path.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(grant);
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let existing = entry.get_mut();
+                for origin in grant.origins {
+                    if !existing.origins.contains(&origin) {
+                        existing.origins.push(origin);
+                    }
+                }
+                for evidence in grant.evidence {
+                    if !existing.evidence.contains(&evidence) {
+                        existing.evidence.push(evidence);
+                    }
+                }
+            }
+        }
+    }
+    grants.extend(by_path.into_values());
 }
 
 fn resolve_executable(program: Option<&OsStr>) -> Option<PathBuf> {

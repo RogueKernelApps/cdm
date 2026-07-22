@@ -46,8 +46,14 @@ if has_native; then
     check_eq "ws/native: branch commit is based on original HEAD" \
         "$(git -C "$WS_REPO" rev-parse "${FIRST_BRANCH}^")" "$ORIGINAL_HEAD"
     check_eq "ws/native: ephemeral worktree is removed" "$(worktree_count "$WS_REPO")" "1"
-    check "ws/native: summary names saved branch" \
-        "$(cat "$WS_REPO/first.stderr")" "changes saved to branch $FIRST_BRANCH"
+    check "ws/native: completion tree names saved branch" \
+        "$(cat "$WS_REPO/first.stderr")" "│  ├─ Branch:           \`$FIRST_BRANCH\`"
+    check "ws/native: completion tree reports changes" \
+        "$(cat "$WS_REPO/first.stderr")" '│  └─ Changes:          "2 files"'
+    check "ws/native: completion tree includes inspect action" \
+        "$(cat "$WS_REPO/first.stderr")" '├─ Inspect:          `git diff'
+    check "ws/native: completion tree includes discard action" \
+        "$(cat "$WS_REPO/first.stderr")" '└─ Discard:          `git branch -D'
 
     # A second session on the same day must not collide with the first branch.
     (cd "$WS_REPO" && "$CDM" --no-proxy --worktree sh -c \
@@ -106,11 +112,27 @@ if has_native; then
     check_eq "ws/native: no-change session creates no branch" \
         "$(cdm_branches "$WS_REPO" | wc -l | tr -d ' ')" "$BRANCH_COUNT"
     check_eq "ws/native: no-change session leaves no worktree" "$(worktree_count "$WS_REPO")" "1"
-    check "ws/native: no-change summary confirms cleanup" \
-        "$(cat "$NO_CHANGES_STDERR")" "no changes, cleaned up"
+    check "ws/native: no-change completion tree confirms cleanup" \
+        "$(cat "$NO_CHANGES_STDERR")" '└─ Result:           "clean"      Temporary worktree removed'
     remove_test_path "$NO_CHANGES_STDERR"
 
     remove_test_path "$WS_REPO"
+
+    # Quiet mode suppresses setup and completion status without discarding the
+    # result branch.
+    WS_REPO=$(make_test_repo)
+    QUIET_STDERR=$(mktemp "${TMPDIR:-/tmp}/cdm-ws-quiet.XXXXXX")
+    (cd "$WS_REPO" && "$CDM" --quiet --no-proxy --worktree sh -c \
+        'printf "quiet-result\n" > quiet.txt') >/dev/null 2>"$QUIET_STDERR"
+    STATUS=$?
+    QUIET_BRANCH=$(branch_with_path "$WS_REPO" quiet.txt || true)
+    check_eq "ws/native: quiet worktree session succeeds" "$STATUS" "0"
+    check_nonempty "ws/native: quiet worktree still saves a result branch" "$QUIET_BRANCH"
+    check_empty "ws/native: quiet worktree suppresses all routine status" \
+        "$(cat "$QUIET_STDERR")"
+    check_eq "ws/native: quiet worktree leaves no temporary worktree" \
+        "$(worktree_count "$WS_REPO")" "1"
+    remove_test_path "$QUIET_STDERR" "$WS_REPO"
 
     # Repository Git metadata, config, environment, and PATH are all hostile
     # inputs. They must not turn trusted post-sandbox finalization into code

@@ -9,7 +9,9 @@ Read the repository-root `AGENTS.md` first.
   kinds, and launch-time device/inode verification. Adapters must not
   canonicalize or reclassify policy paths after resolution.
 - `src/app.rs` owns macOS application-bundle discovery.
+- `src/setup.rs` owns bounded coding-harness detection and the interactive checklist; `config.rs` owns the compiled profile catalog, private registry, and layering.
 - `src/worktree.rs` owns Git-visible state snapshotting, branch reservation, descriptor-relative no-follow finalization, and cleanup.
+- `src/status.rs` owns routine startup and notable completion presentation. It renders typed provenance from `origin.rs` and the already-resolved grant metadata from `access.rs`; it must not resolve policy paths itself. Resolved scalar values use speech marks, while flags, paths, branch names, and actionable commands use escaped backticks. Quiet mode suppresses only routine status; errors, wrapped output, and explicitly requested diagnostics remain visible.
 - `src/trusted_exec.rs` owns validation and identity pinning for host-side helper executables. Never add a PATH-resolved pre/post-sandbox helper elsewhere.
 - `src/anchored.rs` owns descriptor-relative, no-follow reads beneath pinned
   category roots. Secret discovery and staging must pass opened descriptors

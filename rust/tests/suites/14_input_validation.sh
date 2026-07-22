@@ -30,9 +30,9 @@ expect_cli_error() {
 for flag in --allow-ro --allow-rw --app --allow-domains --deny-domains --vmi --report-json; do
     expect_cli_error "$flag missing value" "$flag"
 done
-expect_cli_error "conflicting --rw/--ro" --rw --ro true
 expect_cli_error "conflicting --vm/--vmi" --vm --vmi alpine:3.21 true
 expect_cli_error "config rejects arguments" config unexpected
+expect_cli_error "setup rejects arguments" setup unexpected
 expect_cli_error "completions requires a shell" completions
 expect_cli_error "completions rejects an unknown shell" completions powershell
 expect_cli_error "empty allow-domain list" --allow-domains ,,, true
@@ -41,6 +41,35 @@ expect_cli_error "empty deny-domain list" --deny-domains ,,, true
 section "Malformed configuration"
 
 CONFIG_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cdm-input-config.XXXXXX")
+
+SETUP_HOME="$CONFIG_ROOT/setup-home"
+mkdir -p "$SETUP_HOME/.cdm"
+chmod 700 "$SETUP_HOME/.cdm"
+printf '{"sentinel":true}\n' > "$SETUP_HOME/.cdm/config.json"
+printf '{"version":1,"enabled_profile_ids":["pi"]}\n' \
+    > "$SETUP_HOME/.cdm/setup-profiles.json"
+chmod 600 "$SETUP_HOME/.cdm/setup-profiles.json"
+SETUP_CONFIG_BEFORE=$(cat "$SETUP_HOME/.cdm/config.json")
+SETUP_REGISTRY_BEFORE=$(cat "$SETUP_HOME/.cdm/setup-profiles.json")
+OUT=$(HOME="$SETUP_HOME" "$CDM" setup </dev/null 2>&1 >/dev/null)
+RC=$?
+check_eq "setup rejects non-TTY use" "$RC" "2"
+check "non-TTY setup explains terminal requirement" "$OUT" "interactive terminal"
+check_eq "non-TTY setup preserves global config bytes" \
+    "$(cat "$SETUP_HOME/.cdm/config.json")" "$SETUP_CONFIG_BEFORE"
+check_eq "non-TTY setup preserves registry bytes" \
+    "$(cat "$SETUP_HOME/.cdm/setup-profiles.json")" "$SETUP_REGISTRY_BEFORE"
+
+printf '{"version":2,"enabled_profile_ids":["pi"]}\n' \
+    > "$SETUP_HOME/.cdm/setup-profiles.json"
+MALFORMED_REGISTRY_BEFORE=$(cat "$SETUP_HOME/.cdm/setup-profiles.json")
+OUT=$(HOME="$SETUP_HOME" "$CDM" --no-network true 2>&1 >/dev/null)
+RC=$?
+check_eq "unsupported setup registry version exits with usage status" "$RC" "2"
+check "unsupported setup registry version is explicit" "$OUT" \
+    "unsupported setup profile registry version"
+check_eq "malformed setup registry remains unchanged" \
+    "$(cat "$SETUP_HOME/.cdm/setup-profiles.json")" "$MALFORMED_REGISTRY_BEFORE"
 
 OUT=$(CDM_CONFIG_PATH="/tmp/cdm-insecure-config-$$.json" "$CDM" --no-network true 2>&1 >/dev/null)
 RC=$?

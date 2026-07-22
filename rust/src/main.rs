@@ -14,6 +14,7 @@ mod guard;
 mod invocation;
 mod monitor;
 mod network;
+mod origin;
 mod process;
 mod project;
 mod proxy;
@@ -22,7 +23,9 @@ mod proxy_bridge;
 mod report;
 mod sandbox;
 mod secrets;
+mod setup;
 mod stage;
+mod status;
 mod trusted_exec;
 mod worktree;
 
@@ -107,6 +110,13 @@ fn run() -> i32 {
             Err(e) => {
                 eprintln!("[cdm] error writing config: {}", e);
                 1
+            }
+        },
+        cli::Action::Setup => match setup::run() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("[cdm] error during setup: {error}");
+                2
             }
         },
         cli::Action::Trust => trust_project_config(),

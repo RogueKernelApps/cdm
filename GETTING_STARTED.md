@@ -92,14 +92,17 @@ cdm --scramble --allow-domains registry.npmjs.org,github.com npm install
 cdm --scramble --deny-domains example.invalid bash
 cdm --scramble --allow-domains dev.internal.example --allow-private-network internal-tool
 cdm --worktree coding-agent
+cdm setup
+cdm --profile pi pi
+cdm -q npm test
 cdm --report-json .cdm-session.json --stats npm test
 cdm --sec ./untrusted-checker            # deny-first baseline plus secret scrambling
-cdm --rw npm install                 # explicit default: workspace read/write
+cdm npm install                      # workspace is read/write by default
 cdm --ro npm test                    # workspace read-only
 cdm --iso ./untrusted-checker        # no other host user data
 cdm --iso --ro ./untrusted-checker   # isolated and workspace read-only
-cdm --allow-ro ~/.config/tool tool   # repeatable read-only grant
-cdm --allow-rw ./output tool         # repeatable read/write grant
+cdm -r ~/.config/tool tool   # repeatable read-only grant (--allow-ro)
+cdm -w ./output tool         # repeatable read/write grant (--allow-rw)
 cdm "/Applications/Example.app"
 cdm completions bash > ~/.local/share/bash-completion/completions/cdm
 cdm completions zsh > ~/.zfunc/_cdm
@@ -109,6 +112,11 @@ cdm --vm echo hello
 cdm --vm sh -c 'uname -a && pwd'
 cdm --vmi alpine:3.21 sh
 ```
+
+The default `--vm` path uses CDM's architecture-matched Alpine minirootfs,
+embedded as a roughly 4 MiB compressed image. It needs no image pull, Docker
+daemon, or separately configured VM; use `--vmi` when you want an OCI image
+instead.
 
 Flags are parsed before the command. Command arguments retain their exact Unix byte values and boundaries, including whitespace, newlines, globs, and non-UTF-8 bytes; use `sh -c` explicitly for redirects, pipes, variable expansion, and compound commands. CDM never joins or reparses argv. Filesystem-policy paths are different: every backend must represent them exactly, so a non-UTF-8 workspace, grant, denial, policy, or cache path fails before child launch instead of being converted lossily.
 
@@ -127,23 +135,88 @@ For an internal credential, add an identifier rule without recording its value:
 Global domain denies still take precedence. Responses are identity-encoded and
 re-obfuscated so an upstream echo cannot reveal the restored value.
 
-Filesystem modes compose around a small default: the effective workspace and a private per-invocation runtime directory beneath the invoking user's trusted temporary root are writable, and other host data is read-only. CDM overrides `TMPDIR`, `TMP`, and `TEMP` with that unique session directory, so tools can create temporary files without a path grant while other temporary paths stay read-only. `--ro` changes only the workspace to read-only. `--iso` hides other host user data; explicit path grants remain available. `--rw` is accepted as an explicit spelling of the default and conflicts with `--ro`.
+Filesystem modes compose around a small default: the effective workspace and a private per-invocation runtime directory beneath the invoking user's trusted temporary root are writable, and other host data is read-only. CDM overrides `TMPDIR`, `TMP`, and `TEMP` with that unique session directory, so tools can create temporary files without a path grant while other temporary paths stay read-only. `--ro` changes only the workspace to read-only. `--iso` hides other host user data; explicit path grants remain available.
 
 `--sec` opts into secret scrambling and persistence hardening on every backend. It protects shell profiles, global Git/SSH control files, cron state, host agent hooks/configuration, and existing control entries at the effective workspace root. Workspace protection is exact rather than recursive, preserving nested Git worktree materialization. On macOS, `--sec` selects a deny-first Seatbelt profile with a narrow Mach lookup baseline and intentionally blocks Mach registration and sandbox-extension issuance. Direct normal mode remains compatibility-first for desktop and WebKit applications; `--scramble` with its normal proxy, `--iso`, and `--sec` are deny-first. `--iso` requires that baseline because Seatbelt cannot reopen a path after a broad deny; constructing the isolated read allowlist positively is the correct and enforceable formulation.
 
-Pass an existing `.app` bundle as the command and CDM activates application mode automatically; the older `--app <path.app>` form remains supported. Selecting the bundle is the trust decision: CDM deliberately does not run Gatekeeper, notarization, or code-signature checks. It validates `Info.plist` and the contained executable, then infers narrow grants for exact bundle-ID locations under `Application Support`, `Caches`, `Containers`, `WebKit`, and `Preferences`, product-derived hidden state literally referenced by the bundle, and existing product-related cache directories whose exact name or version is referenced by the executable or bounded configuration resources. CDM prints each inferred grant and its evidence category.
+Pass an existing `.app` bundle as the command and CDM activates application mode automatically; the older `--app <path.app>` form remains supported. Selecting the bundle is the trust decision: CDM deliberately does not run Gatekeeper, notarization, or code-signature checks. It validates `Info.plist` and the contained executable, then infers narrow grants for exact bundle-ID locations under `Application Support`, `Caches`, `Containers`, `WebKit`, and `Preferences`, product-derived hidden state literally referenced by the bundle, and existing product-related cache directories whose exact name or version is referenced by the executable or bounded configuration resources. The startup tree marks each inferred grant with `[app]` provenance and retains its `bundle convention` or `bundle reference` evidence.
 
-Broad or sensitive home roots are never inferred, and automatic paths reject symlinks and escapes. Signed, unsigned, ad-hoc, and local development apps use the same discovery flow. Static inspection cannot predict every runtime-computed path, so add a narrow explicit `--allow-rw` when an app uses nonstandard state. CDM never launches the app unsandboxed to learn permissions.
+Broad or sensitive home roots are never inferred, and automatic paths reject symlinks and escapes. Signed, unsigned, ad-hoc, and local development apps use the same discovery flow. Static inspection cannot predict every runtime-computed path, so add a narrow explicit `-w` (`--allow-rw`) grant when an app uses nonstandard state. CDM never launches the app unsandboxed to learn permissions.
 
 `--worktree` starts from committed `HEAD`, creates a detached no-checkout worktree, and copies the caller's currently materialized tracked files/symlinks plus non-ignored untracked files without diff, checkout, smudge, or process filters. Sparse-excluded paths stay absent and are retained from the base tree during finalization. It preserves a nested invocation's relative directory. The sandbox may edit project files but cannot write its `.git` gitfile or the pinned actual/common Git directories. When the command exits, CDM revalidates those identities and constructs the result commit with non-hook, non-filter Git plumbing in a sanitized host environment, then updates the uniquely reserved `CDM__...` branch atomically and removes the temporary worktree. Finalization opens the worktree root once and reads every entry descriptor-relatively without following symlink ancestors; replacing a tracked directory with a symlink records the link itself and removes its former descendants rather than reading through it. Materialized content that differs from the stored blob, including a materialized Git LFS file, is saved as raw content because CDM will not execute its clean filter as trusted host code. The original checkout and its dirty state remain untouched. Failed commands still preserve their changes and retain their own exit status. Ignored files such as dependency directories are not copied, so install/build them inside the worktree when required.
 
+`-q` and `--quiet` suppress CDM's routine startup and notable completion trees. Wrapped stdout/stderr, CDM errors, explicitly requested `--stats` output, monitor results, and `CDM_DEBUG` diagnostics remain visible.
+
+The startup tree always shows the effective sandbox, file permissions and grants, network, secret, persistence, and worktree policy. Resolved scalar values use speech marks; flags, paths, branch names, and actionable commands use backticks. Each setting includes the flag that controls it and an exact source tag: `[default]`, `[cli]`, `[global]`, `[preset:NAME]`, `[project]`, `[derived]`, or `[app]`. Grant paths abbreviate the home and workspace roots as `~` and `$WORKSPACE`. Wrapped argv values remain hidden because they may contain credentials.
+
 `--report-json <path>` writes a private JSON report for automation, including early validation and setup failures. Schema version 1 records the selected backend, effective policy when resolution was reached, configured-versus-observed denial coverage, bounded directional proxy/secret counters, child status, and cleanup/worktree outcomes. Policy is `null` when validation or setup fails before resolution. Cleanup is reported as successful only after explicit teardown; an emergency unwind with unfinished teardown reports `incomplete`. It never records argv values, paths, domains, error messages, environment values, or secret material. Prepare the report's parent directory first; CDM refuses symlink destinations and fails if the child swaps the pinned parent directory. `--stats` writes a compact summary to stderr, leaving the wrapped command's stdout byte-for-byte untouched.
+
+## Guided coding-harness profiles
+
+Run `cdm setup` in an interactive terminal to enable built-in access profiles
+for supported coding harnesses. Setup checks `PATH` and known user-state markers
+for Pi, Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI; it never launches
+a detected executable. Only detected tools are shown, all are checked by
+default, the arrow keys move, Space toggles a selection, Enter saves, and Escape
+or `q` cancels without changing prior state. With no detected tools, setup
+reports that nothing changed. Piped/non-TTY use fails with guidance and does not
+write state.
+
+When tools are detected, accepting the checklist replaces the enabled-ID list
+with the current selection. Rerun setup to change the list; clear every box and
+press Enter to disable all detected profiles. A cancelled run and a run with no
+detections leave the existing registry unchanged.
+
+Setup writes a versioned, mode-`0600` registry at
+`~/.cdm/setup-profiles.json` under a real, current-user-owned mode-`0700`
+`~/.cdm` directory:
+
+```json
+{
+  "version": 1,
+  "enabled_profile_ids": ["claude", "pi"]
+}
+```
+
+The registry contains IDs only. Profile policy remains compiled into CDM, and
+setup never creates or rewrites `~/.cdm/config.json`. Malformed JSON, unknown or
+duplicate IDs, unsupported versions, unsafe permissions, symlinks, and hard
+links fail closed. The registry and its parent policy directory are hard
+write-denied to sandboxed children.
+
+Enabling a profile does not activate it automatically. Apply enabled profiles
+explicitly and repeat the flag when policies should compose:
+
+```bash
+cdm --profile pi pi
+cdm --profile claude --preset team-policy claude
+cdm --profile codex --profile copilot coding-agent-wrapper
+```
+
+`--profile <id>` is independent from `--preset <name>`, so a built-in profile
+and user preset may have the same string. CDM never selects a profile from the
+wrapped command. At resolution time, a profile's existing customization root is
+read-only while its existing mutable authentication, settings, trust,
+session/history, cache/log, package/plugin, and database paths are read/write.
+Absent optional state paths are skipped rather than broadening access or
+failing the invocation. The initial catalog covers:
+
+- `pi`: `~/.pi/agent` and shared `~/.agents/skills`, with Pi auth, settings,
+  trust, sessions, package stores, model state, and logs mutable.
+- `claude`: `~/.claude` customizations read-only, with `~/.claude.json` plus
+  Claude settings, projects, sessions, plans, history, cache, telemetry, and
+  generated state mutable.
+- `codex`: `~/.codex` customizations read-only, with Codex auth, history,
+  sessions, logs, cache, and local state databases mutable.
+- `copilot`: `~/.copilot` customizations read-only, with Copilot settings,
+  auth/application state, permissions, sessions, logs, plugins, MCP fallback
+  state, databases, and platform cache paths mutable.
 
 ## Configuration and caches
 
-`cdm config` creates defaults at `~/.cdm/config.json` and will not overwrite an existing file. To use `CDM_CONFIG_PATH=/path/policy/config.json`, first create `/path/policy` as a dedicated user-owned directory with no group/world write bits; broad parents such as `/tmp`, `$HOME`, and the project root are rejected. CDM then searches from the original launch directory upward for the nearest `.cdm/config.json`. Review that repository-controlled file and run `cdm trust` from the project: CDM records its exact SHA-256 digest in the mode-0600 `~/.cdm/trusted-projects.json`, and any byte edit requires review and trust again. Symlinked or hard-linked policy files are rejected. `cdm project` reports the root, detected kind, and config path without loading policy or granting access.
+`cdm config` creates defaults at `~/.cdm/config.json` and will not overwrite an existing file. When needed, it creates `~/.cdm` with mode `0700`, so `cdm config` and `cdm setup` can be run in either order on a fresh installation. To use `CDM_CONFIG_PATH=/path/policy/config.json`, first create `/path/policy` as a dedicated user-owned directory with no group/world write bits; broad parents such as `/tmp`, `$HOME`, and the project root are rejected. CDM then searches from the original launch directory upward for the nearest `.cdm/config.json`. Review that repository-controlled file and run `cdm trust` from the project: CDM records its exact SHA-256 digest in the mode-0600 `~/.cdm/trusted-projects.json`, and any byte edit requires review and trust again. Symlinked or hard-linked policy files are rejected. `cdm project` reports the root, detected kind, and config path without loading policy or granting access.
 
-The global file may contain a top-level `presets` object. Repeat `--preset <name>` to apply named presets left-to-right. The effective order is built-ins, global file, selected presets, trusted project file, then CLI flags. Presets are trusted global policy only: project-defined and nested presets are rejected. Partial JSON objects merge with defaults; unknown names, malformed files, and changed/untrusted project files stop execution with exit status 2.
+The global file may contain a top-level `presets` object. Repeat `--preset <name>` to apply named presets left-to-right. The effective order is built-ins, global file, explicitly selected built-in profiles, selected presets, trusted project file, then CLI flags. Presets are trusted global policy only: project-defined and nested presets are rejected. Partial JSON objects merge with defaults; unknown or disabled profile IDs, unknown preset names, malformed files, and changed/untrusted project files stop execution with exit status 2.
 
 The `paths` section supports `allow_ro`, `allow_rw`, `deny_read`, `deny_write`, and `staged_configs`. Path lists are additive and deduplicated; explicit configured denials apply in every mode, while CDM's built-in persistence list is activated only by `--sec`. Global/preset relative paths resolve from `$HOME`, project relative paths resolve from the discovered project root, and CLI grant paths resolve from the effective workspace after `--worktree`. `~` is supported, and explicit grant targets must already exist so mistakes fail closed. The global/trust-store policy directory and the project `.cdm` directory are hard write-denied in the child, preventing file replacement and parent rename/swap attacks even when a broader RW grant exists. Internally discovered app-owned first-launch paths are the deliberate exception to the existence rule: their validated, bundle-ID-derived directories are prepared before policy resolution.
 

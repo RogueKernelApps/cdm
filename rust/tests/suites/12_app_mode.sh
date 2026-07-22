@@ -49,10 +49,11 @@ check "app: resolves bundle executable and creates conventional state" "$APP_STA
 check "app: bundle reference permits a narrow helper cache" \
     "$(cat "$APP_HOME/Library/Caches/fixture-app-renderer/result.txt" 2>/dev/null)" "cache"
 
-check "app: reports the discovered bundle identity" "$APP_OUTPUT" "app: $APP_ID"
-check "app: reports conventional grant evidence" "$APP_OUTPUT" "app rw [bundle]:"
-check "app: reports bundle-reference evidence" "$APP_OUTPUT" "app rw [bundle-reference]:"
-check_not "app: never grants the home root" "$APP_OUTPUT" "app rw [bundle]: $APP_HOME$"
+check "app: reports the discovered bundle identity" "$APP_OUTPUT" "Application:       \"$APP_ID\""
+check "app: reports conventional grant evidence" "$APP_OUTPUT" "(bundle convention)"
+check "app: reports bundle-reference evidence" "$APP_OUTPUT" "(bundle reference)"
+check "app: reports app grant provenance" "$APP_OUTPUT" "[app]"
+check_not "app: abbreviates inferred paths instead of exposing the home root" "$APP_OUTPUT" "$APP_HOME"
 
 EXPLICIT_OUTPUT=$(HOME="$APP_HOME" "$CDM" --no-proxy --iso \
     --app "$APP_BUNDLE" -- explicit-argument 2>&1)
@@ -61,6 +62,6 @@ check_eq "app: explicit compatibility form exits successfully" "$EXPLICIT_STATUS
 check "app: explicit compatibility form preserves arguments" \
     "$(cat "$APP_STATE_DIR/result.txt" 2>/dev/null)" "explicit-argument"
 check "app: explicit compatibility form reports discovery" \
-    "$EXPLICIT_OUTPUT" "app: $APP_ID"
+    "$EXPLICIT_OUTPUT" "Application:       \"$APP_ID\""
 
 remove_test_path "$APP_ROOT"

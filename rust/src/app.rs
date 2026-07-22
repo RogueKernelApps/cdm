@@ -39,8 +39,8 @@ pub enum AppGrantSource {
 impl AppGrantSource {
     pub fn label(self) -> &'static str {
         match self {
-            Self::BundleConvention => "bundle",
-            Self::BundleReference => "bundle-reference",
+            Self::BundleConvention => "bundle convention",
+            Self::BundleReference => "bundle reference",
         }
     }
 }

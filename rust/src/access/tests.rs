@@ -133,10 +133,12 @@ fn resolves_each_configured_path_from_its_source_base() {
             ConfiguredPath {
                 value: "global-state".into(),
                 relative_to: home.clone(),
+                origin: crate::origin::Origin::Global,
             },
             ConfiguredPath {
                 value: "project-state".into(),
                 relative_to: project.clone(),
+                origin: crate::origin::Origin::Project,
             },
         ],
         ..ConfiguredPaths::default()
@@ -199,17 +201,62 @@ fn missing_grants_fail_closed() {
 }
 
 #[test]
+fn missing_optional_profile_state_is_skipped_without_weakening_explicit_grants() {
+    let (work, home) = fixture();
+    let paths = ConfiguredPaths {
+        allow_rw: vec![ConfiguredPath {
+            value: ".pi/agent/optional-state".into(),
+            relative_to: home.clone(),
+            origin: crate::origin::Origin::Profile("pi".into()),
+        }],
+        ..ConfiguredPaths::default()
+    };
+
+    let resolved = AccessPolicy::from_configured_paths(&paths)
+        .resolve(&work, &home, &[], &["true".into()])
+        .unwrap();
+
+    assert!(resolved.allow_rw_grants.iter().all(|grant| !grant
+        .origins
+        .contains(&crate::origin::Origin::Profile("pi".into()))));
+    let _ = std::fs::remove_dir_all(work.parent().unwrap());
+}
+
+#[test]
 fn discovered_grants_may_name_application_state_created_on_first_launch() {
     let (work, home) = fixture();
     let state = home.join("Library/Application Support/example.app");
     let mut policy = AccessPolicy::new(&PathsConfig::default());
-    policy.add_discovered_rw(state.clone());
+    policy.add_discovered_rw(state.clone(), Some("bundle convention".into()));
 
     let resolved = policy
         .resolve(&work, &home, &[], &[std::ffi::OsString::from("true")])
         .unwrap();
 
     assert!(resolved.allow_rw.contains(&state));
+    let _ = std::fs::remove_dir_all(work.parent().unwrap());
+}
+
+#[test]
+fn duplicate_grants_retain_every_contributing_source() {
+    let (work, home) = fixture();
+    let state = home.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let mut policy = AccessPolicy::new(&PathsConfig::default());
+    policy.add_allow_rw(state.clone());
+    policy.add_discovered_rw(state.clone(), Some("bundle convention".into()));
+
+    let resolved = policy
+        .resolve(&work, &home, &[], &[std::ffi::OsString::from("true")])
+        .unwrap();
+
+    let grant = resolved
+        .allow_rw_grants
+        .iter()
+        .find(|grant| grant.path == state.canonicalize().unwrap())
+        .unwrap();
+    assert_eq!(grant.origins, vec![Origin::Cli, Origin::App]);
+    assert_eq!(grant.evidence, vec!["bundle convention"]);
     let _ = std::fs::remove_dir_all(work.parent().unwrap());
 }
 

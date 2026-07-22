@@ -6,6 +6,7 @@ Dependencies were reviewed against their latest stable crates.io releases on 16 
 |---|---:|---|
 | `aho-corasick` | 1.1.4 | Bounded overlapping literal matching while streaming macOS bundle references |
 | `clap` / `clap_complete` | 4.6.x | One typed parser generates validation, help, and Bash/Zsh/Fish completion without duplicating the flag contract |
+| `dialoguer` | 0.12.0 | Arrow/Space multi-select for interactive `cdm setup`; default features are disabled and setup preflights stdin/stderr TTYs. Its Rust 1.66 MSRV, and `console` 0.16.4's Rust 1.71 MSRV, remain below CDM's Rust 1.88 floor. |
 | `libc` | 0.2.186 | Current platform constants and bindings |
 | `serde` | 1.0.228 | Current derive and serialization fixes |
 | `serde_json` | 1.0.150 | Current JSON parser/serializer fixes |
@@ -29,6 +30,7 @@ Primary release histories: [Tokio](https://github.com/tokio-rs/tokio/releases), 
 - Hudsucker 0.25.0 is pinned through `[patch.crates-io]` because upstream's unknown-protocol CONNECT path can silently fall back to an opaque tunnel after interception was requested. CDM's minimal licensed patch adds a handler decision at that edge; CDM always disables the fallback so upstream connections cannot bypass its per-resolution private-address policy. Track upstream releases and remove the vendor override once an equivalent hook is published; no other vendored source is modified.
 - OCI cache writes are private, locked, tree-digest verified, and atomic. Authenticated layers stream to no-follow temporary files under configurable compressed/expanded/entry/depth quotas; extraction failures are never ignored, and overlay whiteouts are implemented only after validation.
 - Default features were disabled where appropriate to avoid duplicate TLS stacks and native OpenSSL dependencies.
+- Guided setup isolates `dialoguer` behind `setup.rs`; non-interactive command execution and the native build do not depend on terminal prompt state.
 - The previous shared proxy daemon was removed. Every invocation owns an in-memory secret map and a short-lived proxy/CA artifact directory.
 - The lockfile was refreshed to the latest compatible transitive graph, including current `bitflags`, `bstr`, `regex`, `syn`, and `uuid` releases.
 - Compile-only VM feature checks can use a host libkrun installation. A runnable direct build must also provide a verified target-matching static guest init and provenance through the three `CDM_GUEST_INIT_*` build inputs; macOS additionally requires the Hypervisor entitlement. Release builds instead construct those inputs, re-extract and compile the pinned stable libkrun/libkrunfw sources for every invocation, verify downloaded checksums, build CDM in a fresh target-specific Cargo directory, and use an executable-relative `lib/cdm` runtime path. Package verification follows the transitive libkrun/libkrunfw edges, rejects build-host paths, checks signatures/entitlements or ELF RPATHs, and executes a relocated copy without loader override variables.

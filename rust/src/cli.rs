@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub enum Action {
     Run(Box<RunArgs>),
     WriteConfig,
+    Setup,
     Trust,
     Project,
     Completions(CompletionShell),
@@ -25,6 +26,9 @@ pub enum Action {
     trailing_var_arg = true
 )]
 pub struct RunArgs {
+    /// Apply a profile enabled by `cdm setup` (pi, claude, codex, or copilot). May be repeated.
+    #[arg(long, value_name = "ID")]
+    pub profile: Vec<String>,
     /// Apply a named global configuration preset. May be repeated.
     #[arg(long, value_name = "NAME")]
     pub preset: Vec<String>,
@@ -40,20 +44,17 @@ pub struct RunArgs {
     /// Scramble discovered secrets, hide credential files, and enable the egress proxy.
     #[arg(long)]
     pub scramble: bool,
-    /// Make the workspace read/write (the default).
-    #[arg(long, conflicts_with = "ro")]
-    pub rw: bool,
-    /// Make the workspace read-only.
-    #[arg(long, conflicts_with = "rw")]
+    /// Make the workspace read-only; read/write is the default.
+    #[arg(long)]
     pub ro: bool,
     /// Hide host user data outside explicit grants.
     #[arg(long)]
     pub iso: bool,
     /// Add a read-only path grant. May be repeated.
-    #[arg(long, value_name = "PATH")]
+    #[arg(short = 'r', long, value_name = "PATH")]
     pub allow_ro: Vec<PathBuf>,
     /// Add a read/write path grant. May be repeated.
-    #[arg(long, value_name = "PATH")]
+    #[arg(short = 'w', long, value_name = "PATH")]
     pub allow_rw: Vec<PathBuf>,
     /// Explicit alternative to automatic macOS .app command detection.
     #[arg(long, value_name = "PATH.APP")]
@@ -85,6 +86,9 @@ pub struct RunArgs {
     /// Print compact session statistics to stderr.
     #[arg(long)]
     pub stats: bool,
+    /// Suppress routine CDM status output.
+    #[arg(short, long)]
+    pub quiet: bool,
     /// Command and arguments. Shell syntax requires an explicit shell.
     #[arg(value_name = "COMMAND", allow_hyphen_values = true)]
     pub command: Vec<OsString>,
@@ -123,6 +127,11 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, clap::E
         Some("config") => Err(clap::Error::raw(
             clap::error::ErrorKind::TooManyValues,
             "cdm config does not accept arguments",
+        )),
+        Some("setup") if args.len() == 1 => Ok(Action::Setup),
+        Some("setup") => Err(clap::Error::raw(
+            clap::error::ErrorKind::TooManyValues,
+            "cdm setup does not accept arguments",
         )),
         Some("trust") if args.len() == 1 => Ok(Action::Trust),
         Some("trust") => Err(clap::Error::raw(
@@ -185,6 +194,7 @@ fn completion_command() -> clap::Command {
     RunArgs::command()
         .subcommand(run)
         .subcommand(clap::Command::new("config"))
+        .subcommand(clap::Command::new("setup"))
         .subcommand(clap::Command::new("trust"))
         .subcommand(clap::Command::new("project"))
         .subcommand(
@@ -205,11 +215,31 @@ pub fn write_help(writer: &mut impl io::Write) -> io::Result<()> {
     writeln!(writer, "USAGE:\n    cdm [FLAGS] [COMMAND] [ARGS]...")?;
     writeln!(writer, "    cdm run [FLAGS] [COMMAND] [ARGS]...")?;
     writeln!(writer, "    cdm config")?;
+    writeln!(writer, "    cdm setup")?;
     writeln!(writer, "    cdm trust")?;
     writeln!(writer, "    cdm project")?;
     writeln!(writer, "    cdm help")?;
     writeln!(writer, "    cdm version")?;
     writeln!(writer, "    cdm completions <bash|zsh|fish>\n")?;
+    writeln!(writer, "BUILT-IN COMMANDS:")?;
+    writeln!(
+        writer,
+        "    setup       Interactively enable detected coding-harness profiles"
+    )?;
+    writeln!(writer, "                IDs: pi, claude, codex, copilot")?;
+    writeln!(
+        writer,
+        "    config      Create the global configuration if absent"
+    )?;
+    writeln!(
+        writer,
+        "    trust       Approve the nearest project configuration"
+    )?;
+    writeln!(
+        writer,
+        "    project     Report the discovered project and configuration"
+    )?;
+    writeln!(writer, "    completions Generate shell completion source\n")?;
     let mut command = RunArgs::command();
     command.write_long_help(writer)?;
     Ok(())

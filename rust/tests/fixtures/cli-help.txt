@@ -4,11 +4,20 @@ USAGE:
     cdm [FLAGS] [COMMAND] [ARGS]...
     cdm run [FLAGS] [COMMAND] [ARGS]...
     cdm config
+    cdm setup
     cdm trust
     cdm project
     cdm help
     cdm version
     cdm completions <bash|zsh|fish>
+
+BUILT-IN COMMANDS:
+    setup       Interactively enable detected coding-harness profiles
+                IDs: pi, claude, codex, copilot
+    config      Create the global configuration if absent
+    trust       Approve the nearest project configuration
+    project     Report the discovered project and configuration
+    completions Generate shell completion source
 
 Usage: cdm [OPTIONS] [COMMAND]...
 
@@ -17,6 +26,9 @@ Arguments:
           Command and arguments. Shell syntax requires an explicit shell
 
 Options:
+      --profile <ID>
+          Apply a profile enabled by `cdm setup` (pi, claude, codex, or copilot). May be repeated
+
       --preset <NAME>
           Apply a named global configuration preset. May be repeated
 
@@ -32,19 +44,16 @@ Options:
       --scramble
           Scramble discovered secrets, hide credential files, and enable the egress proxy
 
-      --rw
-          Make the workspace read/write (the default)
-
       --ro
-          Make the workspace read-only
+          Make the workspace read-only; read/write is the default
 
       --iso
           Hide host user data outside explicit grants
 
-      --allow-ro <PATH>
+  -r, --allow-ro <PATH>
           Add a read-only path grant. May be repeated
 
-      --allow-rw <PATH>
+  -w, --allow-rw <PATH>
           Add a read/write path grant. May be repeated
 
       --app <PATH.APP>
@@ -76,3 +85,6 @@ Options:
 
       --stats
           Print compact session statistics to stderr
+
+  -q, --quiet
+          Suppress routine CDM status output

@@ -531,46 +531,6 @@ pub fn protected_metadata_paths(info: &WorktreeInfo) -> Vec<PathBuf> {
     paths
 }
 
-/// Prints a human-readable summary of the workspace result to stderr.
-pub fn print_summary(result: &WorktreeResult) {
-    use std::io::Write;
-    let stderr = io::stderr();
-    let mut err = stderr.lock();
-
-    match result {
-        WorktreeResult::NoChanges => {
-            let _ = writeln!(err, "[cdm] worktree: no changes, cleaned up");
-        }
-        WorktreeResult::Committed {
-            branch,
-            base_commit,
-            files_changed,
-            insertions,
-            deletions,
-        } => {
-            let _ = writeln!(
-                err,
-                "[cdm] worktree: {} files changed, {} insertions(+), {} deletions(-)",
-                files_changed, insertions, deletions
-            );
-            let _ = writeln!(err, "[cdm] worktree: changes saved to branch {}", branch);
-            let _ = writeln!(err, "[cdm]");
-            let _ = writeln!(
-                err,
-                "[cdm]   View changes:   git diff {}..{}",
-                base_commit, branch
-            );
-            let _ = writeln!(err, "[cdm]   Apply changes:  git merge {}", branch);
-            let _ = writeln!(
-                err,
-                "[cdm]   Open PR:        gh pr create --head {}",
-                branch
-            );
-            let _ = writeln!(err, "[cdm]   Discard:        git branch -D {}", branch);
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

@@ -2,7 +2,9 @@
 
 CDM embeds one official Alpine minirootfs for each supported VM architecture.
 `rootfs.rs` selects the archive at compile time, so an AArch64 binary cannot
-silently boot the x86-64 guest (or vice versa).
+silently boot the x86-64 guest (or vice versa). The pinned archives are roughly
+4 MiB compressed, giving the default `--vm` path a network-free guest image
+without requiring an external image store or VM setup.
 
 The versions and archive digests are pinned in `packaging/versions.env`.
 `alpine-rootfs.lock.json` is generated from the archives themselves and records

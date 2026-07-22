@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::project::PROJECT_CONFIG;
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn test_default_config_matches_current() {
@@ -261,6 +262,21 @@ fn save_default_refuses_to_overwrite_an_existing_config() {
 }
 
 #[test]
+fn save_default_creates_a_private_policy_directory() {
+    let temp =
+        std::env::temp_dir().join(format!("cdm-config-private-parent-{}", std::process::id()));
+    let policy_dir = temp.join(".cdm");
+    let path = policy_dir.join("config.json");
+    let _ = std::fs::remove_dir_all(&temp);
+
+    save_default_to(&path).unwrap();
+
+    let mode = std::fs::metadata(&policy_dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
 fn project_layer_overrides_scalars_and_adds_origin_aware_paths() {
     let temp = std::env::temp_dir().join(format!("cdm-layered-config-{}", std::process::id()));
     let home = temp.join("home");
@@ -293,10 +309,12 @@ fn project_layer_overrides_scalars_and_adds_origin_aware_paths() {
     assert!(loaded.paths.allow_rw.contains(&ConfiguredPath {
         value: "global-state".into(),
         relative_to: home.clone(),
+        origin: Origin::Global,
     }));
     assert!(loaded.paths.allow_rw.contains(&ConfiguredPath {
         value: "project-state".into(),
         relative_to: project_root,
+        origin: Origin::Project,
     }));
     let _ = std::fs::remove_dir_all(temp);
 }
@@ -462,6 +480,7 @@ fn selected_global_presets_apply_in_order_before_project_config() {
         assert!(loaded.paths.allow_rw.contains(&ConfiguredPath {
             value: value.into(),
             relative_to: home.clone(),
+            origin: Origin::Preset(value.trim_end_matches("-state").into()),
         }));
     }
 
@@ -592,4 +611,226 @@ fn trust_store_keys_reject_non_utf8_paths() {
     assert!(error
         .to_string()
         .contains("filesystem policy paths must be valid UTF-8"));
+}
+
+#[test]
+fn built_in_profile_catalog_is_stable_and_splits_read_only_from_mutable_state() {
+    let profiles = built_in_profiles();
+    assert_eq!(
+        profiles
+            .iter()
+            .map(|profile| profile.id)
+            .collect::<Vec<_>>(),
+        ["pi", "claude", "codex", "copilot"]
+    );
+    assert_eq!(
+        profiles
+            .iter()
+            .map(|profile| profile.executable)
+            .collect::<Vec<_>>(),
+        ["pi", "claude", "codex", "copilot"]
+    );
+    for profile in profiles {
+        assert!(
+            !profile.allow_ro.is_empty(),
+            "{} needs read-only inputs",
+            profile.id
+        );
+        assert!(
+            !profile.allow_rw.is_empty(),
+            "{} needs mutable state",
+            profile.id
+        );
+        assert!(
+            !profile.markers.is_empty(),
+            "{} needs a state marker",
+            profile.id
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_profile_registry_round_trips_privately_and_idempotently() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = std::env::temp_dir().join(format!("cdm-setup-registry-{}", std::process::id()));
+    let home = temp.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let path =
+        write_setup_profiles_in(&home, &["pi".into(), "claude".into(), "pi".into()]).unwrap();
+    assert_eq!(read_setup_profiles_in(&home).unwrap(), ["claude", "pi"]);
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    let before = std::fs::read(&path).unwrap();
+    write_setup_profiles_in(&home, &["pi".into(), "claude".into()]).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn setup_profile_registry_rejects_malformed_unknown_and_unsafe_state_without_replacing_it() {
+    use std::fs::hard_link;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let temp =
+        std::env::temp_dir().join(format!("cdm-unsafe-setup-registry-{}", std::process::id()));
+    let home = temp.join("home");
+    let parent = home.join(".cdm");
+    let path = parent.join(SETUP_PROFILES_FILE);
+    std::fs::create_dir_all(&parent).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    for bytes in [
+        br#"{"version":2,"enabled_profile_ids":[]}"#.as_slice(),
+        br#"{"version":1,"enabled_profile_ids":["unknown"]}"#.as_slice(),
+        br#"{"version":1,"enabled_profile_ids":["pi","pi"]}"#.as_slice(),
+        br#"{"version":1,"enabled_profile_ids":[],"extra":true}"#.as_slice(),
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(read_setup_profiles_in(&home).is_err());
+        let before = std::fs::read(&path).unwrap();
+        assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    std::fs::write(&path, br#"{"version":1,"enabled_profile_ids":["pi"]}"#).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(write_setup_profiles_in(&home, &["claude".into()]).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    assert!(write_setup_profiles_in(&home, &["claude".into()]).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+    std::fs::remove_file(&path).unwrap();
+    let target = temp.join("target.json");
+    std::fs::write(&target, br#"{"version":1,"enabled_profile_ids":[]}"#).unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    symlink(&target, &path).unwrap();
+    assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
+    std::fs::remove_file(&path).unwrap();
+
+    hard_link(&target, &path).unwrap();
+    assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        br#"{"version":1,"enabled_profile_ids":[]}"#
+    );
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[test]
+fn explicit_enabled_profiles_apply_before_presets_and_project_with_distinct_origins() {
+    let temp = std::env::temp_dir().join(format!("cdm-profile-layering-{}", std::process::id()));
+    let home = temp.join("home");
+    let global = temp.join("global.json");
+    let project_root = temp.join("project");
+    let project_path = project_root.join(PROJECT_CONFIG);
+    let trust_path = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(project_path.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        &global,
+        r#"{"presets":{"pi":{"paths":{"allow_rw":["preset-state"]}}}}"#,
+    )
+    .unwrap();
+    std::fs::write(&project_path, r#"{"paths":{"allow_rw":["project-state"]}}"#).unwrap();
+    let project = ProjectContext {
+        launch_dir: project_root.clone(),
+        root: project_root.clone(),
+        config_path: Some(project_path),
+    };
+    trust_project_in(&project, &trust_path).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            trust_path.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+    }
+    write_setup_profiles_in(&home, &["pi".into(), "claude".into()]).unwrap();
+
+    let loaded = load_from_paths_with_profiles(
+        &global,
+        &project,
+        &home,
+        &["claude".into(), "pi".into()],
+        &["pi".into()],
+        &trust_path,
+        &setup_profiles_path(&home),
+    )
+    .unwrap();
+    assert!(loaded.paths.allow_ro.iter().any(|path| {
+        path.value == ".claude"
+            && path.relative_to == home
+            && path.origin == Origin::Profile("claude".into())
+    }));
+    let claude_position = loaded
+        .paths
+        .allow_ro
+        .iter()
+        .position(|path| path.origin == Origin::Profile("claude".into()))
+        .unwrap();
+    let pi_position = loaded
+        .paths
+        .allow_ro
+        .iter()
+        .position(|path| path.origin == Origin::Profile("pi".into()))
+        .unwrap();
+    assert!(claude_position < pi_position);
+    assert!(loaded.paths.allow_ro.iter().any(|path| {
+        path.value == ".pi/agent"
+            && path.relative_to == home
+            && path.origin == Origin::Profile("pi".into())
+    }));
+    assert!(loaded
+        .paths
+        .allow_rw
+        .iter()
+        .any(|path| path.origin == Origin::Preset("pi".into())));
+    assert!(loaded
+        .paths
+        .allow_rw
+        .iter()
+        .any(|path| path.origin == Origin::Project));
+    let registry = setup_profiles_path(&home);
+    for protected in [registry.as_path(), registry.parent().unwrap()] {
+        assert!(loaded.paths.deny_write.iter().any(|path| {
+            path.value == protected.to_string_lossy() && path.relative_to.as_os_str().is_empty()
+        }));
+    }
+
+    let error = load_from_paths_with_profiles(
+        &global,
+        &project,
+        &home,
+        &["codex".into()],
+        &[],
+        &trust_path,
+        &setup_profiles_path(&home),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    assert!(error.to_string().contains("cdm setup"));
+    let _ = std::fs::remove_dir_all(temp);
 }

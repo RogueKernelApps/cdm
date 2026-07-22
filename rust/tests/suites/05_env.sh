@@ -10,7 +10,7 @@ assert_secret_prelaunch_failure() {
     local stderr status
 
     stderr=$(cd "$workspace" && CDM_CONFIG_PATH="$config_path" \
-        "$CDM" --rw --scramble --no-network -- sh -c \
+        "$CDM" --scramble --no-network -- sh -c \
         'printf "child-ran\n" > child-marker' 2>&1 >/dev/null)
     status=$?
 

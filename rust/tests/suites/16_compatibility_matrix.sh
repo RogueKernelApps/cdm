@@ -58,11 +58,13 @@ if [ -n "${CDM_APP_SMOKE_BUNDLE_IDS:-}" ]; then
             RC=$?
             check_eq "$bundle_id app version probe exits successfully" "$RC" "0"
             check "$bundle_id app probe reports the resolved bundle identity" \
-                "$OUT" "app: $bundle_id"
+                "$OUT" "Application:       \"$bundle_id\""
             check "$bundle_id app probe reports each inferred state grant" \
-                "$OUT" "app rw [bundle]:"
-            check_not "$bundle_id app probe never grants the whole home" \
-                "$OUT" "app rw [bundle]: $APP_HOME$"
+                "$OUT" "(bundle convention)"
+            check "$bundle_id app probe reports app grant provenance" \
+                "$OUT" "[app]"
+            check_not "$bundle_id app probe abbreviates inferred home paths" \
+                "$OUT" "$APP_HOME"
             remove_test_path "$APP_HOME"
             IFS=','
         done

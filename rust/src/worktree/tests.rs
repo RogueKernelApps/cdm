@@ -715,21 +715,3 @@ fn test_run_git_not_a_repo() {
 
     let _ = fs::remove_dir_all(&dir);
 }
-
-#[test]
-fn test_print_summary_no_changes() {
-    // Just verify it doesn't panic
-    print_summary(&WorktreeResult::NoChanges);
-}
-
-#[test]
-fn test_print_summary_committed() {
-    // Just verify it doesn't panic
-    print_summary(&WorktreeResult::Committed {
-        branch: "CDM__2026-03-25__project__user".to_string(),
-        base_commit: "0123456789abcdef".to_string(),
-        files_changed: 3,
-        insertions: 10,
-        deletions: 2,
-    });
-}

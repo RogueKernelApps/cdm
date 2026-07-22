@@ -109,6 +109,16 @@ EOF
 done
 
 if [ "$(uname -s)" = "Darwin" ] && has_native; then
+    PHYSICAL_TMP=${TMPDIR%/}
+    case "$PHYSICAL_TMP" in
+        /private/var/*) PUBLIC_TMP="/var/${PHYSICAL_TMP#/private/var/}" ;;
+        *) PUBLIC_TMP=$PHYSICAL_TMP ;;
+    esac
+    OUT=$(cd "$FIXTURE" && TMPDIR="$PUBLIC_TMP/" "$CDM" --no-proxy -- sh -c \
+        'mkdir -p "$TMPDIR/nested/tool/runtime" && printf nested-temp-ok' 2>/dev/null)
+    check_eq "macOS: public temp alias permits nested tool directories" \
+        "$OUT" "nested-temp-ok"
+
     ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cdm_macos_denial_rename_test.XXXXXX")
     WORK="$ROOT/work"
     CONFIG_DIR="$ROOT/config"
@@ -296,11 +306,4 @@ PY
     kill "$DEPUTY_PID" >/dev/null 2>&1 || true
     wait "$DEPUTY_PID" >/dev/null 2>&1 || true
     remove_test_path "$ROOT"
-fi
-
-"$CDM" --rw --ro true >/dev/null 2>&1
-if [ $? -eq 2 ]; then
-    check "cli: --rw and --ro conflict" "exit 2" "exit 2"
-else
-    check "cli: --rw and --ro conflict" "wrong exit status" "exit 2"
 fi

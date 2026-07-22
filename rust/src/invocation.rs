@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::{
     access, app, cli, config, discover_launch_project, guard, monitor, network, proxy, report,
-    sandbox, secrets, stage, worktree,
+    sandbox, secrets, stage, status, worktree,
 };
 
 mod lifecycle;
@@ -15,6 +15,55 @@ mod lifecycle;
 use lifecycle::InvocationLifecycle;
 
 pub fn run(args: cli::RunArgs) -> i32 {
+    let status = status::Status::new(args.quiet);
+    let worktree_requested = args.worktree;
+    let status_origins = status::StartupOrigins {
+        backend: if args.vm || args.vmi.is_some() {
+            crate::origin::Origin::Cli
+        } else {
+            crate::origin::Origin::Default
+        },
+        global: if args.iso {
+            crate::origin::Origin::Cli
+        } else {
+            crate::origin::Origin::Default
+        },
+        workspace: if args.ro {
+            crate::origin::Origin::Cli
+        } else {
+            crate::origin::Origin::Default
+        },
+        network: if args.no_network
+            || args.no_proxy
+            || args.allow_domains.is_some()
+            || args.deny_domains.is_some()
+            || args.allow_private_network
+        {
+            crate::origin::Origin::Cli
+        } else if args.scramble || args.sec {
+            crate::origin::Origin::Derived
+        } else {
+            crate::origin::Origin::Default
+        },
+        secrets: if args.scramble {
+            crate::origin::Origin::Cli
+        } else if args.sec {
+            crate::origin::Origin::Derived
+        } else {
+            crate::origin::Origin::Default
+        },
+        security: if args.sec {
+            crate::origin::Origin::Cli
+        } else {
+            crate::origin::Origin::Default
+        },
+        worktree: if args.worktree {
+            crate::origin::Origin::Cli
+        } else {
+            crate::origin::Origin::Default
+        },
+    };
+    let mut status_details = Vec::new();
     let report_destination = match args.report_json.as_deref() {
         Some(path) => match report::ReportDestination::prepare(path) {
             Ok(destination) => Some(destination),
@@ -35,6 +84,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
     let mut lifecycle = InvocationLifecycle::provisional(
         report_destination,
         args.stats,
+        args.quiet,
         requested_backend,
         args.command.len() as u64,
     );
@@ -45,7 +95,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
             return lifecycle.fail_setup(report::LaunchStage::Validation, 2, Vec::new());
         }
     };
-    let cdm_config = match config::load_with_presets(&project, &args.preset) {
+    let cdm_config = match config::load_with_profiles(&project, &args.profile, &args.preset) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("[cdm] error: {error}");
@@ -135,23 +185,19 @@ pub fn run(args: cli::RunArgs) -> i32 {
         let write_path_count = plan.allow_rw.len();
         let write_grants = plan.allow_rw;
         for grant in &write_grants {
-            cfg.access.add_discovered_rw(grant.path.clone());
+            cfg.access
+                .add_discovered_rw(grant.path.clone(), Some(grant.source.label().to_string()));
         }
         if bundle_is_command {
             cfg.command.remove(0);
         }
         cfg.command.insert(0, plan.executable.into_os_string());
-        eprintln!(
-            "[cdm] app: {} ({} writable state paths discovered)",
-            plan.bundle_id, write_path_count
-        );
-        for grant in write_grants {
-            eprintln!(
-                "[cdm] app rw [{}]: {}",
-                grant.source.label(),
-                grant.path.display()
-            );
-        }
+        status_details.push(status::Detail {
+            label: "Application".to_string(),
+            value: plan.bundle_id,
+            summary: format!("{write_path_count} writable paths"),
+            origin: crate::origin::Origin::App,
+        });
     }
 
     // Validate the command before allocating a worktree or proxy session.
@@ -164,7 +210,7 @@ pub fn run(args: cli::RunArgs) -> i32 {
     lifecycle.set_failure_stage(report::LaunchStage::Setup);
 
     // --- Worktree Mode ---
-    if args.worktree {
+    if worktree_requested {
         lifecycle.record_phase_now(
             report::LifecyclePhase::Worktree,
             report::PhaseState::Started,
@@ -174,11 +220,6 @@ pub fn run(args: cli::RunArgs) -> i32 {
                 lifecycle.record_phase_now(
                     report::LifecyclePhase::Worktree,
                     report::PhaseState::Succeeded,
-                );
-                let _ = writeln!(
-                    io::stderr(),
-                    "[cdm] worktree: {}",
-                    info.worktree_dir.display()
                 );
                 for path in worktree::protected_metadata_paths(&info) {
                     cfg.access.add_runtime_deny_write(path);
@@ -201,7 +242,6 @@ pub fn run(args: cli::RunArgs) -> i32 {
 
     if cfg.scramble {
         // --- Secret Scanning ---
-        let _ = writeln!(io::stderr(), "[cdm] scanning for secrets...");
         let allow_home_path = |path: &std::path::Path| {
             cfg.access.host == access::HostAccess::Normal
                 || cfg
@@ -234,14 +274,6 @@ pub fn run(args: cli::RunArgs) -> i32 {
             let sensitive_values = cfg.secrets.real_to_fake.keys().cloned().collect::<Vec<_>>();
             return lifecycle.fail_setup(report::LaunchStage::Setup, 1, sensitive_values);
         }
-
-        let _ = writeln!(
-            io::stderr(),
-            "[cdm] {} secrets scrambled, {} env vars injected, {} paths denied",
-            cfg.secrets.fake_to_real.len(),
-            cfg.injected_env.len(),
-            cfg.denied_read_paths.len(),
-        );
     }
 
     // --- Monitor Mode ---
@@ -327,7 +359,13 @@ pub fn run(args: cli::RunArgs) -> i32 {
     }
 
     // --- Print Summary ---
-    print_summary(&cfg);
+    status.startup(
+        &cfg,
+        &resolved_access,
+        worktree_requested,
+        &status_details,
+        &status_origins,
+    );
 
     // --- Run Sandbox ---
     lifecycle.set_failure_stage(report::LaunchStage::Sandbox);
@@ -544,73 +582,6 @@ fn start_monitor(cfg: &sandbox::SandboxConfig) -> io::Result<monitor::Monitor> {
         monitor.log_path().display()
     );
     Ok(monitor)
-}
-
-/// Starts a per-run egress proxy. Real secret mappings remain in this
-/// process's memory and are never serialized into sandbox-visible storage.
-/// Prints the pre-launch summary to stderr.
-fn print_summary(cfg: &sandbox::SandboxConfig) {
-    let (sandbox_type, os_name) = if cfg.use_vm {
-        let image = cfg.vm_image.as_deref().unwrap_or("bundled-alpine");
-        ("libkrun VM".to_string(), format!("TSI, rootfs={}", image))
-    } else if cfg!(target_os = "macos") {
-        ("seatbelt".to_string(), "darwin".to_string())
-    } else {
-        ("bubblewrap".to_string(), "linux".to_string())
-    };
-
-    let _ = writeln!(
-        io::stderr(),
-        "[cdm] sandbox: {} ({})",
-        sandbox_type,
-        os_name
-    );
-    // Argv values can contain secrets and arbitrary Unix bytes. Never render
-    // them in trusted-host diagnostics; only report the non-sensitive count.
-    let _ = writeln!(
-        io::stderr(),
-        "[cdm] running: <{} argv entries>",
-        cfg.command.len()
-    );
-    let _ = writeln!(
-        io::stderr(),
-        "[cdm] access: workspace={}, host={}",
-        cfg.access.workspace.label(),
-        cfg.access.host.label()
-    );
-    if cfg.secure {
-        let _ = writeln!(
-            io::stderr(),
-            "[cdm] security: secure (deny-first, secrets scrambled)"
-        );
-    } else if cfg.scramble {
-        let _ = writeln!(io::stderr(), "[cdm] secrets: scrambled");
-    }
-
-    if matches!(cfg.network, network::NetworkPolicy::Disabled) {
-        let _ = writeln!(io::stderr(), "[cdm] network: disabled");
-    } else if cfg.network.is_proxied() {
-        let _ = writeln!(
-            io::stderr(),
-            "[cdm] network: proxied (port {}, MITM)",
-            cfg.proxy_port
-        );
-    } else {
-        let _ = writeln!(io::stderr(), "[cdm] network: direct");
-    }
-
-    if let Some(domains) = cfg.network.domains() {
-        let allowed = domains.allowed_display();
-        let denied = domains.denied_display();
-        if !allowed.is_empty() {
-            let _ = writeln!(io::stderr(), "[cdm] allowed domains: {}", allowed);
-        }
-        if !denied.is_empty() {
-            let _ = writeln!(io::stderr(), "[cdm] denied domains: {}", denied);
-        }
-    }
-
-    let _ = writeln!(io::stderr());
 }
 
 #[cfg(test)]

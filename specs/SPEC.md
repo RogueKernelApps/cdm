@@ -2,7 +2,7 @@
 
 Version: 0.1.4
 
-Updated 21 July 2026. `ARCHITECTURE.md` defines the component and trust model; this file defines expected behavior.
+Updated 22 July 2026. `ARCHITECTURE.md` defines the component and trust model; this file defines expected behavior.
 
 ## Overview
 
@@ -21,6 +21,7 @@ CDM wraps any command in an OS-native sandbox. By default it uses direct network
 cdm <command> [args...]           # Shorthand: run command in sandbox
 cdm run [flags] <command> [args]  # Explicit run with flags
 cdm config                        # Generate default config at ~/.cdm/config.json
+cdm setup                         # Select detected built-in access profiles
 cdm trust                         # Trust the nearest project config's exact bytes
 cdm project                       # Report discovered root, kind, and config
 cdm completions <bash|zsh|fish>   # Write shell completion source to stdout
@@ -30,9 +31,38 @@ cdm help                          # Print usage
 
 If no command is given, CDM prints help and exits successfully. `cdm run` without a command launches the user's `$SHELL` (fallback: `/bin/bash`).
 
-`cdm config` is create-only and must not overwrite an existing configuration. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
+`cdm config` is create-only and must not overwrite an existing configuration. When it creates the default policy directory, that directory has mode 0700 so guided setup can use it safely. `cdm setup` is a distinct argument-free built-in and must never modify the global config. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
 
-Configuration precedence is built-in defaults, the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), named global presets selected left-to-right, the trusted nearest project `.cdm/config.json` discovered from the original launch directory, then CLI flags. Path arrays are additive and deduplicated; other explicitly supplied fields replace the lower layer. Global/preset relative paths resolve from `$HOME`, project relative paths from the project root, and CLI relative paths from the effective workspace. Project and nested presets are invalid. Unknown presets are errors. Hard denials cannot be removed by a higher layer.
+Configuration precedence is built-in defaults, the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), enabled built-in profiles explicitly selected left-to-right with `--profile`, named global presets selected left-to-right, the trusted nearest project `.cdm/config.json` discovered from the original launch directory, then CLI flags. Path arrays are additive and deduplicated; other explicitly supplied fields replace the lower layer. Global/profile/preset relative paths resolve from `$HOME`, project relative paths from the project root, and CLI relative paths from the effective workspace. Built-in profile and user preset namespaces are independent. Project and nested presets are invalid. Unknown or disabled profile IDs and unknown presets are errors. Hard denials cannot be removed by a higher layer. A wrapped executable never implies a profile.
+
+Guided setup initially supports `pi`, `claude`, `codex`, and `copilot`, in that
+catalog order. A tool is detected when its named executable is present and
+executable on `PATH`, or when one of its fixed user-state markers exists. CDM
+must not execute a candidate or recursively scan user directories during
+detection. Only detected entries are displayed, all are selected by default,
+arrow keys navigate, Space toggles, Enter accepts, and Escape or `q` cancels.
+No detections produce a successful no-change result. Setup requires both stdin
+and stderr to be terminals; non-TTY use is rejected before any registry write.
+
+Setup persists only selected IDs in
+`~/.cdm/setup-profiles.json` as
+`{"version":1,"enabled_profile_ids":[...]}`. IDs are unique and written in
+deterministic order. The registry must be a current-user-owned, regular,
+single-link, mode-0600 file beneath a real, current-user-owned mode-0700
+`~/.cdm` directory. Reads use `O_NOFOLLOW`; unknown fields, duplicate or unknown
+IDs, unsupported versions, malformed JSON, unsafe ownership/permissions,
+symlinks, and hard links are errors. Updates use a mode-0600 create-new
+temporary file, sync, and atomic rename. Non-TTY use, cancellation, validation
+errors, and pre-publication write failures preserve prior registry and global
+config bytes. The registry file and its containing policy directory are hard
+write-denied to native and VM children.
+
+Compiled profiles divide existing per-tool state into read-only customization
+roots and narrower read/write authentication, settings, trust, session/history,
+cache/log, package/plugin, and database paths. Missing optional built-in profile
+paths are omitted rather than causing a failure or widening access; missing
+explicit configuration and CLI grants remain errors. Profile-contributed paths
+retain terminal-safe `[profile:ID]` provenance.
 
 The project config is loaded only when its exact bytes match `~/.cdm/trusted-projects.json`. The trust store must be owned by the current user, mode 0600, and updated by create-and-rename from a mode-0600 temporary file. Policy reads use one `O_NOFOLLOW` descriptor for regular-file metadata, bytes, hashing, and parsing; files with multiple hard links are rejected. Any project-config byte edit invalidates trust. The global config, trust store, project config, and their dedicated containing policy directories are write-denied inside the child sandbox so explicit grants cannot replace them or rename/swap their parents. A custom global config parent must already be a real directory owned by the invoking UID with no group/world write bits. Direct placement beneath `/`, `/tmp`, `/private/tmp`, `$HOME`, the trusted temporary root, or the project root is rejected because CDM cannot safely deny those broad parents in full.
 
@@ -44,11 +74,11 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 | `--no-proxy` | Keep direct network access when scrambling, without secret restoration or domain filtering. Conflicts with domain rules. |
 | `--sec` | Imply `--scramble`, enable secure persistence denials on every backend, and on macOS use the deny-first capability baseline. |
 | `--scramble` | Discover and replace secrets, hide/stage credential files, and enable the fail-closed egress proxy unless networking is direct or disabled. |
-| `--rw` | Make the effective workspace read/write (the default). Conflicts with `--ro`. |
-| `--ro` | Make the effective workspace read-only. Conflicts with `--rw`. |
+| `--ro` | Make the effective workspace read-only instead of the read/write default. |
 | `--iso` | Hide host user data outside the workspace and explicit grants. Composes with `--ro`. |
-| `--allow-ro <path>` | Add a read-only path grant (repeatable). |
-| `--allow-rw <path>` | Add a read/write path grant (repeatable). |
+| `-r`, `--allow-ro <path>` | Add a read-only path grant (repeatable). |
+| `-w`, `--allow-rw <path>` | Add a read/write path grant (repeatable). |
+| `--profile <id>` | Apply an enabled compiled built-in access profile (repeatable, left-to-right). |
 | `--preset <name>` | Apply a named global configuration preset (repeatable, left-to-right). |
 | `--app <path.app>` | Explicit compatibility spelling for automatic macOS `.app` command detection. |
 | `--monitor` | Stream sandbox denial events to a private log shown in a separate terminal viewer. |
@@ -60,6 +90,7 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 | `--worktree` | Run against a temporary Git worktree and save resulting changes on a generated branch. |
 | `--report-json <path>` | Atomically write a private, schema-versioned, redacted session report. |
 | `--stats` | Write compact aggregate session statistics to stderr without changing child stdout. |
+| `-q`, `--quiet` | Suppress routine startup and completion status without suppressing wrapped output, CDM errors, or explicitly requested diagnostics. |
 
 ### Environment Variables
 
@@ -71,7 +102,7 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 
 ### Exit Behaviour
 
-CDM exits with the sandboxed command's exit code. CLI, configuration, trust, and preflight validation refusals use status 2. Other CDM failures (for example sandbox setup) exit non-zero with a log message to stderr.
+CDM exits with the sandboxed command's exit code. CLI, configuration, guided-setup, trust, and preflight validation refusals use status 2. Other CDM failures (for example sandbox setup) exit non-zero with a log message to stderr.
 
 Every native host adapter command runs in a dedicated supervised process group. CDM
 hands an interactive terminal to that group, forwards parent-delivered
@@ -209,7 +240,7 @@ Scan these sources in order:
 4. **.env files** in working directory — `.env`, `.env.local`, `.env.development`, `.env.production`, `.env.staging`, `.env.test`.
 5. **Other config files** — `~/.kube/config`, `~/.npmrc`, `~/.docker/config.json`.
 
-Under `--iso`, home-directory credential discovery and staging are disabled unless an explicit `--allow-ro`/`--allow-rw` grant covers the path. When scrambling is enabled, environment variables and project `.env*` files remain in scope.
+Under `--iso`, home-directory credential discovery and staging are disabled unless an explicit `-r`/`--allow-ro` or `-w`/`--allow-rw` grant covers the path. When scrambling is enabled, environment variables and project `.env*` files remain in scope.
 
 Configured candidate files are optional when absent. CDM pins the workspace and
 home category roots, opens every descendant directory component descriptor-
@@ -369,6 +400,7 @@ Generate an SBPL profile and run via `sandbox-exec -f <profile> <command>`.
 3. Allow writes to essential runtime paths:
    - `/dev` — devices, pseudo-ttys, unix sockets
    - the unique mode-0700 invocation directory beneath the invoking user's validated private temporary root
+   - for paths beneath `/tmp`, `/var`, or `/etc`, emit both the public spelling and its `/private/...` physical spelling so Seatbelt permits tools to create nested paths through either macOS alias
 4. Allow writes to the working directory only in RW mode, plus explicit `allow_rw` grants. The home directory is never broadly writable.
 5. In `--iso`, switch to the deny-first profile and allow file-content reads only for system/runtime roots, the workspace, temp, explicit grants, and discovered app grants. Seatbelt denies are final; a positive allowlist is required because a broad deny cannot later be reopened.
 6. When scrambling is active, deny reads to discovered sensitive files (`.env`, `~/.aws/credentials`, SSH private keys, etc.) via `(deny file-read-data (literal "..."))`.
@@ -603,16 +635,38 @@ On macOS, Seatbelt emits captured literal/subpath denials plus move-blocking `de
 
 All CDM status output goes to **stderr** (never stdout — stdout belongs to the wrapped command).
 
-### Startup Messages
+### Routine status
 ```
-[cdm] scanning for secrets...
-[cdm] 12 secrets scrambled, 8 env vars injected, 5 paths denied
-[cdm] sandbox: seatbelt (darwin)
-[cdm] running: <3 argv entries>
-[cdm] network: proxied (port 18080, MITM)
+cdm
+├─ Sandbox:
+│  └─ Backend:          "seatbelt"   macOS native sandbox
+│                                  flags: `--vm | --vmi IMAGE`            [default]
+├─ File permissions:
+│  ├─ Global:           "ro"         Host readable; writes need a grant
+│  │                               flags: `--iso | -w PATH`               [default]
+│  ├─ Workspace:        "rw"         Project files are writable
+│  │                               flags: `--ro`                          [default]
+│  ├─ Read-only grants:  "none"                                       [default]
+│  └─ Read/write grants: "1 path"                                     [cli]
+│     └─ `~/.pi`                                                         [cli]
+├─ Network:
+│  └─ Mode:             "direct"     Unrestricted host network
+│                                  flags: `--no-network | --scramble`     [default]
+├─ Secrets:
+│  └─ Mode:             "unchanged"  Passed through as-is
+│                                  flags: `--scramble | --sec`            [default]
+├─ Security:
+│  └─ Persistence:      "standard"   Normal sandbox protections
+│                                  flags: `--sec`                         [default]
+├─ Worktree:
+│  └─ Mode:             "off"        Run in the current checkout
+│                                  flags: `--worktree`                    [default]
+└─ Run:                 "1 arg"      Arguments hidden
 ```
 
-The scanning and scrambling lines appear only for `--scramble` or `--sec`. A default invocation reports `network: direct` instead.
+The tree always reports the effective sandbox, global/workspace filesystem policy, grant categories, network, secret, persistence, and worktree modes. Labels end in colons; resolved scalar values use speech marks, while flags, paths, branch names, and actionable commands use backticks. Plain-English meanings, controlling flags, and provenance remain visually distinct. Provenance is one of `[default]`, `[cli]`, `[global]`, `[preset:NAME]`, `[project]`, `[derived]`, or `[app]`. Home and workspace grant paths are abbreviated as `~` and `$WORKSPACE`; mixed grant categories retain exact provenance on each path. CDM reports the wrapped argv count but never argv values. Relevant domain-policy and application details may add rows. A completed worktree invocation emits one matching Unicode `cdm done` tree with the child exit code, result branch, diff statistics, and inspect/merge/pull-request/discard commands. No-change worktrees report successful cleanup in that tree. A failed wrapped command without a worktree emits the compact exit portion only; ordinary successful commands emit no completion tree.
+
+`-q` and `--quiet` suppress routine status trees and other informational lifecycle lines. They do not suppress wrapped stdout/stderr, `[cdm] error:` diagnostics, `--stats`, `--monitor`, or `CDM_DEBUG` output.
 
 ### Debug Mode (`CDM_DEBUG=1`)
 ```
@@ -653,7 +707,7 @@ The scanning and scrambling lines appear only for `--scramble` or `--sec`. A def
 | Monitor | Disabled |
 | Domain filtering | None (all domains allowed) |
 | macOS capability baseline | Compatibility-first for direct/disabled normal mode; secure, isolated, and proxied modes are deny-first |
-| Workspace access | Read/write (`--rw`); `--ro` is opt-in |
+| Workspace access | Read/write by default; `--ro` is opt-in |
 | Other host data | Read-only in normal mode; hidden in `--iso` |
 | Writable paths | Workspace, private per-invocation runtime storage, explicit `allow_rw` grants, and paths derived by application mode |
 | Config files | Global `~/.cdm/config.json` (override with `CDM_CONFIG_PATH`) plus nearest project `.cdm/config.json` |

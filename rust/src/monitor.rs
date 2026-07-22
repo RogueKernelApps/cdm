@@ -264,8 +264,8 @@ const OPEN_TERMINAL_SCRIPT: &str = r#"on run argv
 set logPath to item 1 of argv
 tell application "/System/Applications/Utilities/Terminal.app"
     activate
-    set tabRef to do script "exec /usr/bin/tail -f -- " & quoted form of logPath
-    return id of window of tabRef
+    do script "exec /usr/bin/tail -f -- " & quoted form of logPath
+    return id of front window
 end tell
 end run"#;
 

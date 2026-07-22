@@ -36,11 +36,11 @@ PUBLIC_FLAGS = (
     "--no-proxy",
     "--sec",
     "--scramble",
-    "--rw",
     "--ro",
     "--iso",
     "--allow-ro",
     "--allow-rw",
+    "--profile",
     "--preset",
     "--app",
     "--monitor",
@@ -140,9 +140,22 @@ def main() -> int:
     else:
         help_snapshot = help_snapshot_path.read_text(encoding="utf-8")
         for flag in PUBLIC_FLAGS:
-            if not re.search(rf"^\s+{re.escape(flag)}(?:\s|$)", help_snapshot, re.MULTILINE):
+            if not re.search(
+                rf"^\s+(?:-[A-Za-z0-9],\s+)?{re.escape(flag)}(?:\s|$)",
+                help_snapshot,
+                re.MULTILINE,
+            ):
                 errors.append(f"CLI help snapshot missing public flag: {flag}")
-        for command in ("run", "config", "trust", "project", "help", "version", "completions"):
+        for command in (
+            "run",
+            "config",
+            "setup",
+            "trust",
+            "project",
+            "help",
+            "version",
+            "completions",
+        ):
             if not re.search(rf"^\s+cdm {command}(?:\s|$)", help_snapshot, re.MULTILINE):
                 errors.append(f"CLI help snapshot missing command: {command}")
         cli_test_source = (RUST / "src/cli/tests.rs").read_text(encoding="utf-8")

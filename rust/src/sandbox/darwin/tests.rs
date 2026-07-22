@@ -253,7 +253,7 @@ fn proxied_profile_is_deny_first_and_only_allows_the_proxy_endpoint() {
 }
 
 #[test]
-fn canonical_private_paths_include_their_public_macos_alias() {
+fn macos_paths_include_their_physical_and_public_aliases() {
     assert_eq!(
         macos_path_alias(std::path::Path::new("/private/tmp/example/file")),
         Some(PathBuf::from("/tmp/example/file"))
@@ -265,6 +265,18 @@ fn canonical_private_paths_include_their_public_macos_alias() {
     assert_eq!(
         macos_path_alias(std::path::Path::new("/private/etc/hosts")),
         Some(PathBuf::from("/etc/hosts"))
+    );
+    assert_eq!(
+        macos_path_alias(std::path::Path::new("/tmp/example/file")),
+        Some(PathBuf::from("/private/tmp/example/file"))
+    );
+    assert_eq!(
+        macos_path_alias(std::path::Path::new("/var/folders/example")),
+        Some(PathBuf::from("/private/var/folders/example"))
+    );
+    assert_eq!(
+        macos_path_alias(std::path::Path::new("/etc/hosts")),
+        Some(PathBuf::from("/private/etc/hosts"))
     );
     assert_eq!(
         macos_path_alias(std::path::Path::new("/Users/example")),

@@ -33,19 +33,87 @@ cdm --vm sh -c 'uname -a'
 cdm --vmi ubuntu:24.04 bash
 ```
 
-`--vm` uses CDM's bundled Alpine guest. `--vmi` starts from an OCI image. Only
-the workspace and explicit grants are exposed to the guest.
+`--vm` boots CDM's architecture-matched Alpine guest from a roughly 4 MiB
+compressed image embedded in the binary—no image pull, Docker daemon, or VM
+setup required. `--vmi` starts from an OCI image instead. Only the workspace
+and explicit grants are exposed to the guest.
 
 ### Let CDM handle the worktree
 
-```bash
-cdm --worktree claude
+Start on your normal branch:
+
+```console
+$ cd ~/projects/hello-world
+$ git branch --list
+* main
 ```
 
-**No checkout juggling.** CDM copies the current Git-visible working state into
-a temporary worktree, lets the agent edit it, and saves the result on a unique
-`CDM__...` branch. The original checkout stays untouched, and useful changes
-survive even when the command exits nonzero.
+Then give an agent a disposable worktree:
+
+```console
+$ cdm --worktree claude
+
+cdm
+├─ Sandbox:
+│  └─ Backend:          "seatbelt"   macOS native sandbox
+│                                  flags: `--vm | --vmi IMAGE`            [default]
+├─ File permissions:
+│  ├─ Global:           "ro"         Host readable; writes need a grant
+│  │                               flags: `--iso | -w PATH`               [default]
+│  ├─ Workspace:        "rw"         Project files are writable
+│  │                               flags: `--ro`                          [default]
+│  ├─ Read-only grants:  "none"                                       [default]
+│  └─ Read/write grants: "none"                                       [default]
+├─ Network:
+│  └─ Mode:             "direct"     Unrestricted host network
+│                                  flags: `--no-network | --scramble`     [default]
+├─ Secrets:
+│  └─ Mode:             "unchanged"  Passed through as-is
+│                                  flags: `--scramble | --sec`            [default]
+├─ Security:
+│  └─ Persistence:      "standard"   Normal sandbox protections
+│                                  flags: `--sec`                         [default]
+├─ Worktree:
+│  └─ Mode:             "active"     Save changes to a new branch
+│                                  flags: `--worktree`                    [cli]
+└─ Run:                 "1 arg"      Arguments hidden
+
+> Make a HELLO_WORLD.md file in this folder.
+
+Created HELLO_WORLD.md.
+
+> /quit
+
+cdm done
+├─ Exit:
+│  └─ Status:           "success"    Command exited with code 0
+├─ Worktree:
+│  ├─ Result:           "saved"      Changes preserved on a branch
+│  ├─ Branch:           `CDM__2026-07-22__hello-world__developer`
+│  └─ Changes:          "1 file"     +1 -0
+└─ Next steps:
+   ├─ Inspect:          `git diff bafb04e..CDM__2026-07-22__hello-world__developer`
+   ├─ Merge:            `git merge CDM__2026-07-22__hello-world__developer`
+   ├─ Open PR:          `gh pr create --head CDM__2026-07-22__hello-world__developer`
+   └─ Discard:          `git branch -D CDM__2026-07-22__hello-world__developer`
+```
+
+CDM removes the temporary worktree. Your checkout never moved, and the agent's
+changes are waiting on their own branch:
+
+```console
+$ git branch --list
+  CDM__2026-07-22__hello-world__developer
+* main
+```
+
+**No checkout juggling—and no lost work.** CDM starts from the current
+Git-visible state, and it preserves useful changes even when the agent exits
+nonzero. Generated branch names include the date, project, and user, so yours
+will differ from the example above.
+
+CDM keeps these trees scannable by putting resolved values in speech marks and
+terminal literals—flags, paths, branches, and commands—inside backticks.
 
 ### Add only the controls you need
 
@@ -57,14 +125,15 @@ survive even when the command exits nonzero.
 | `cdm --sec claude` | Apply CDM's one-flag hardened baseline. |
 | `cdm --sec --worktree claude` | Combine the hardened baseline with an isolated Git workflow. |
 | `cdm --sec --iso --ro --no-network ./untrusted-checker` | Compose the strongest native controls for a potentially hostile command. |
+| `cdm -q npm test` | Hide routine CDM status while preserving command output and errors. |
 
 Need to expose one specific path? Start isolated, then grant only what the tool
 needs:
 
 ```bash
 cdm --iso \
-  --allow-ro ~/.config/tool \
-  --allow-rw ./project_acme/output \
+  -r ~/.config/tool \
+  -w ./project_acme/output \
   tool
 ```
 
@@ -141,10 +210,120 @@ boundaries.
 
 ## Configuration
 
-`cdm config` creates `~/.cdm/config.json`. CDM also discovers the nearest
-project `.cdm/config.json`, but ignores it until its exact bytes are approved
-with `cdm trust`. `cdm project` reports the discovered project without granting
-access. Repeat `--preset <name>` to apply named global presets.
+CDM keeps editable policy separate from the state written by `cdm setup` and
+`cdm trust`:
+
+| Purpose | Path | Managed by |
+|---|---|---|
+| Global user policy and named presets | `~/.cdm/config.json` (or `CDM_CONFIG_PATH`) | You; `cdm config` creates the defaults once |
+| Nearest project policy | `<project>/.cdm/config.json` | The repository; you approve it with `cdm trust` |
+| Enabled built-in profile IDs | `~/.cdm/setup-profiles.json` | `cdm setup` |
+| Approved project-config digests | `~/.cdm/trusted-projects.json` | `cdm trust` |
+
+### Global and project policy
+
+`cdm config` creates `~/.cdm/config.json` without overwriting an existing file.
+On first use it creates the private `~/.cdm` policy directory with mode `0700`.
+The generated file contains every default; a hand-edited file may contain only
+the sections it changes. For example:
+
+**`~/.cdm/config.json`** (excerpt)
+
+```json
+{
+  "paths": {
+    "allow_ro": [".config/team-tool"],
+    "allow_rw": ["work-output"]
+  },
+  "presets": {
+    "team-policy": {
+      "secrets": {
+        "restore_destinations": {
+          "INTERNAL_API_TOKEN": ["api.internal.example"]
+        }
+      }
+    }
+  }
+}
+```
+
+Global and preset relative paths resolve from `$HOME`. Explicit path targets
+must already exist. Repeat `--preset <name>` to apply named global presets.
+
+A repository can add narrower, shared policy in its nearest project config:
+
+**`<project>/.cdm/config.json`** (excerpt)
+
+```json
+{
+  "paths": {
+    "allow_ro": ["docs"],
+    "allow_rw": ["reports"]
+  }
+}
+```
+
+Project-relative paths resolve from the project root, and project configs
+cannot define presets. Review the file, then approve its exact bytes:
+
+```bash
+cdm project
+cdm trust
+```
+
+Any byte change requires `cdm trust` again. Policy precedence is built-in
+defaults, global config, explicitly selected profiles, selected presets,
+trusted project config, then CLI flags.
+
+### Guided profile setup
+
+Run `cdm setup` in an interactive terminal after installation. It detects Pi,
+Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI from executables and known
+state markers without executing those tools. Use the arrow keys to move, Space
+to toggle, and Enter to save; Escape or `q` cancels without changing the prior
+selection. All detected tools start selected.
+
+Setup saves IDs—not profile policy—and never rewrites the global config:
+
+**`~/.cdm/setup-profiles.json`** (CDM-managed excerpt)
+
+```json
+{
+  "version": 1,
+  "enabled_profile_ids": ["claude", "pi"]
+}
+```
+
+The available IDs are `pi`, `claude`, `codex`, and `copilot`. Enabling one only
+makes it available; CDM never infers a profile from the wrapped executable.
+Apply profiles explicitly, repeating `--profile` when they should compose:
+
+```bash
+cdm --profile pi pi
+cdm --profile claude --preset team-policy claude
+cdm --profile codex --profile copilot coding-agent-wrapper
+```
+
+Built-in profile names and user preset names are independent. Rerun `cdm setup`
+to change the enabled list; clearing every checkbox and pressing Enter disables
+all detected profiles.
+
+For completeness, trusting a project updates the other managed state file:
+
+**`~/.cdm/trusted-projects.json`** (CDM-managed excerpt)
+
+```json
+{
+  "version": 1,
+  "projects": {
+    "/Users/alex/src/acme/.cdm/config.json": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+Do not add entries by hand: `cdm trust` records the canonical config path and
+SHA-256 digest atomically. Both managed files use mode `0600` and live under the
+mode-`0700` `~/.cdm` directory.
 
 ## Reports and monitoring
 
@@ -167,7 +346,7 @@ platform sandbox denials and fails closed if monitoring cannot start.
 - [Packaging](rust/packaging/README.md) — release and corresponding-source runbook
 - [Security policy](SECURITY.md) — supported scope and private reporting
 - [Future work](FUTURE.md) — known gaps and planned work
-- [Agent instructions](AGENTS.md) — repository contribution constraints for coding agents
+- [Agent instructions](./AGENTS.md) — repository contribution constraints for coding agents
 
 ## Build and release status
 

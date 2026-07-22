@@ -87,6 +87,11 @@ if has_native; then
         printf "  ${RED}FAIL${NC} config: cdm trust failed or trust store is not mode 0600\n"; FAIL=$((FAIL + 1))
     fi
 
+    LAYER_STATUS=$(cd "$PROJECT" && HOME="$TEST_HOME" CDM_CONFIG_PATH="$GLOBAL_CONFIG" \
+        "$CDM" --no-proxy true 2>&1)
+    check "config: startup identifies global grant provenance" "$LAYER_STATUS" "[global]"
+    check "config: startup identifies trusted project grant provenance" "$LAYER_STATUS" "[project]"
+
     if (cd "$PROJECT" && HOME="$TEST_HOME" CDM_CONFIG_PATH="$GLOBAL_CONFIG" \
         "$CDM" --preset first --preset second --no-proxy sh -c \
         "touch '$GLOBAL_STATE/from-global' '$PROJECT_STATE/from-project'") >/dev/null 2>&1; then
@@ -158,6 +163,63 @@ if has_native; then
     remove_test_path "$LAYER_ROOT"
 else
     skip "config: global and project grant layering" "native sandbox unavailable"
+fi
+
+# Test: built-in profiles remain explicit and independent from same-named user presets.
+if has_native; then
+    PROFILE_ROOT=$(mktemp -d "$TEST_TMP/cdm_profile_test.XXXXXX")
+    PROFILE_HOME="$PROFILE_ROOT/home"
+    PROFILE_PROJECT="$PROFILE_ROOT/project"
+    PROFILE_PRESET_STATE="$PROFILE_ROOT/preset-state"
+    mkdir -p "$PROFILE_HOME/.cdm" "$PROFILE_HOME/.pi/agent/sessions" \
+        "$PROFILE_PROJECT" "$PROFILE_PRESET_STATE"
+    chmod 700 "$PROFILE_HOME/.cdm"
+    printf 'profile instructions\n' > "$PROFILE_HOME/.pi/agent/AGENTS.md"
+    printf '{"version":1,"enabled_profile_ids":["pi"]}\n' \
+        > "$PROFILE_HOME/.cdm/setup-profiles.json"
+    chmod 600 "$PROFILE_HOME/.cdm/setup-profiles.json"
+    printf '{"presets":{"pi":{"paths":{"allow_rw":["%s"]}}}}\n' \
+        "$PROFILE_PRESET_STATE" > "$PROFILE_HOME/.cdm/config.json"
+    CONFIG_BEFORE=$(cat "$PROFILE_HOME/.cdm/config.json")
+
+    PROFILE_OUTPUT=$(cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
+        CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
+        "$CDM" --profile pi --preset pi --no-proxy sh -c \
+        "touch '$PROFILE_HOME/.pi/agent/sessions/from-profile' '$PROFILE_PRESET_STATE/from-preset'" \
+        2>&1)
+    PROFILE_RC=$?
+    if [ "$PROFILE_RC" -eq 0 ] && \
+        [ -f "$PROFILE_HOME/.pi/agent/sessions/from-profile" ] && \
+        [ -f "$PROFILE_PRESET_STATE/from-preset" ] && \
+        grep -Fq '[profile:pi]' <<<"$PROFILE_OUTPUT"; then
+        printf "  ${GREEN}PASS${NC} config: explicit profile and same-named preset apply independently\n"; PASS=$((PASS + 1))
+    else
+        printf "  ${RED}FAIL${NC} config: explicit profile and same-named preset did not both apply\n"; FAIL=$((FAIL + 1))
+    fi
+    check_eq "config: profile invocation does not rewrite global config" \
+        "$(cat "$PROFILE_HOME/.cdm/config.json")" "$CONFIG_BEFORE"
+
+    if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
+        CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
+        "$CDM" --no-proxy sh -c \
+        "touch '$PROFILE_HOME/.pi/agent/sessions/inferred-profile'") >/dev/null 2>&1; then
+        printf "  ${RED}FAIL${NC} config: wrapped executable state was granted without --profile\n"; FAIL=$((FAIL + 1))
+    else
+        printf "  ${GREEN}PASS${NC} config: profiles are never inferred from wrapped commands\n"; PASS=$((PASS + 1))
+    fi
+
+    if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
+        CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
+        "$CDM" --profile pi --no-proxy sh -c \
+        "printf tampered > '$PROFILE_HOME/.pi/agent/AGENTS.md'") >/dev/null 2>&1; then
+        printf "  ${RED}FAIL${NC} config: profile read-only customization was writable\n"; FAIL=$((FAIL + 1))
+    else
+        check_eq "config: profile customization stays read-only" \
+            "$(cat "$PROFILE_HOME/.pi/agent/AGENTS.md")" "profile instructions"
+    fi
+    remove_test_path "$PROFILE_ROOT"
+else
+    skip "config: explicit built-in profiles" "native sandbox unavailable"
 fi
 
 # Test: custom config overrides VM defaults — both VM modes

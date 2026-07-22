@@ -6,7 +6,8 @@ section "CLI Validation"
 for shell in bash zsh fish; do
     OUT=$("$CDM" completions "$shell" 2>/dev/null)
     if [ "$?" -eq 0 ] && grep -Fq "allow-rw" <<<"$OUT" && \
-        grep -Fq "preset" <<<"$OUT" && grep -Fq "scramble" <<<"$OUT" && \
+        grep -Fq "preset" <<<"$OUT" && grep -Fq "profile" <<<"$OUT" && \
+        grep -Fq "scramble" <<<"$OUT" && grep -Fq "setup" <<<"$OUT" && \
         grep -Fq "trust" <<<"$OUT" && \
         grep -Fq "project" <<<"$OUT" && grep -Fq "version" <<<"$OUT" && \
         grep -Fq "bash" <<<"$OUT" && grep -Fq "zsh" <<<"$OUT" && \
@@ -30,6 +31,7 @@ COMPLETION_SHELLS=$(printf '%s\n' "$ZSH_COMPLETIONS" | awk '
 ')
 if grep -Fq -- '--allow-rw' <<<"$RUN_COMPLETIONS" && \
     grep -Fq -- '--report-json' <<<"$RUN_COMPLETIONS" && \
+    grep -Fq -- '--profile' <<<"$RUN_COMPLETIONS" && \
     grep -Fq -- '--scramble' <<<"$RUN_COMPLETIONS"; then
     printf "  ${GREEN}PASS${NC} zsh run subcommand owns the typed run flags\n"; PASS=$((PASS + 1))
 else
@@ -56,7 +58,7 @@ for args in \
     fi
 done
 
-for flag in --allow-ro --allow-rw --allow-domains --deny-domains --preset; do
+for flag in --allow-ro --allow-rw --allow-domains --deny-domains --profile --preset; do
     STDERR=$("$CDM" "$flag" 2>&1 >/dev/null)
     RC=$?
     if [ "$RC" -eq 2 ] && grep -Eq "requires|required" <<<"$STDERR"; then
@@ -72,6 +74,64 @@ if [ "$?" -eq 2 ] && grep -Fq 'unknown preset' <<<"$STDERR"; then
     printf "  ${GREEN}PASS${NC} unknown configuration preset is rejected\n"; PASS=$((PASS + 1))
 else
     printf "  ${RED}FAIL${NC} unknown configuration preset is rejected\n"; FAIL=$((FAIL + 1))
+fi
+
+PROFILE_ERROR_HOME=$(mktemp -d "${TMPDIR:-/tmp}/cdm_profile_error.XXXXXX")
+STDERR=$(HOME="$PROFILE_ERROR_HOME" "$CDM" --profile does-not-exist true 2>&1 >/dev/null)
+if [ "$?" -eq 2 ] && grep -Fq 'unknown built-in profile' <<<"$STDERR"; then
+    printf "  ${GREEN}PASS${NC} unknown built-in profile is rejected\n"; PASS=$((PASS + 1))
+else
+    printf "  ${RED}FAIL${NC} unknown built-in profile is rejected\n"; FAIL=$((FAIL + 1))
+fi
+STDERR=$(HOME="$PROFILE_ERROR_HOME" "$CDM" --profile pi true 2>&1 >/dev/null)
+if [ "$?" -eq 2 ] && grep -Fq 'cdm setup' <<<"$STDERR"; then
+    printf "  ${GREEN}PASS${NC} known but disabled profile points to setup\n"; PASS=$((PASS + 1))
+else
+    printf "  ${RED}FAIL${NC} known but disabled profile points to setup\n"; FAIL=$((FAIL + 1))
+fi
+remove_test_path "$PROFILE_ERROR_HOME"
+
+if has_native; then
+    section "Status Output"
+
+    STATUS_STDERR=$(cd "$FIXTURE" && "$CDM" true 2>&1 >/dev/null)
+    check "status: startup uses the compact tree" "$STATUS_STDERR" 'cdm'
+    check "status: startup groups the native sandbox" "$STATUS_STDERR" '├─ Sandbox:'
+    check "status: startup distinguishes backend field and value" "$STATUS_STDERR" '└─ Backend:          "seatbelt"'
+    check "status: startup groups file permissions" "$STATUS_STDERR" '├─ File permissions:'
+    check "status: startup reports the resolved workspace mode" "$STATUS_STDERR" '├─ Workspace:        "rw"'
+    check "status: startup reports default provenance" "$STATUS_STDERR" 'flags: `--ro`                          [default]'
+    check "status: startup reports the resolved network mode" "$STATUS_STDERR" '└─ Mode:             "direct"'
+    check "status: startup reports unchanged secrets" "$STATUS_STDERR" 'Mode:             "unchanged"'
+    check "status: startup reports disabled worktree mode" "$STATUS_STDERR" 'Run in the current checkout'
+    check "status: startup reports only the argv count" "$STATUS_STDERR" '└─ Run:                 "1 arg"      Arguments hidden'
+    check_not "status: startup omits the old scattered prefix" "$STATUS_STDERR" '[cdm] sandbox:'
+
+    STATUS_GRANT=$(cd "$FIXTURE" && "$CDM" -w "$FIXTURE/hello.sh" true 2>&1 >/dev/null)
+    check "status: CLI grants show their exact source" "$STATUS_GRANT" 'Read/write grants: "1 path"'
+    check "status: workspace grants are abbreviated" "$STATUS_GRANT" '└─ `$WORKSPACE/hello.sh`'
+    check "status: CLI grant provenance is visible" "$STATUS_GRANT" '[cli]'
+    check_not "status: abbreviated grants do not expose the workspace path" "$STATUS_GRANT" "$FIXTURE/hello.sh"
+
+    FAILURE_STDERR=$(cd "$FIXTURE" && "$CDM" sh -c 'exit 7' 2>&1 >/dev/null)
+    check "status: failed commands receive a completion tree" \
+        "$FAILURE_STDERR" '└─ Status:           "failed"     Command exited with code 7'
+
+    QUIET_STDERR=$(cd "$FIXTURE" && "$CDM" -q true 2>&1 >/dev/null)
+    check_empty "quiet: short flag suppresses routine CDM status" "$QUIET_STDERR"
+    QUIET_STDERR=$(cd "$FIXTURE" && "$CDM" --quiet true 2>&1 >/dev/null)
+    check_empty "quiet: long flag suppresses routine CDM status" "$QUIET_STDERR"
+    QUIET_STDERR=$(cd "$FIXTURE" && "$CDM" --quiet sh -c 'exit 7' 2>&1 >/dev/null)
+    check_empty "quiet: failed command suppresses routine completion status" "$QUIET_STDERR"
+
+    QUIET_CHILD_STDERR=$(cd "$FIXTURE" && \
+        "$CDM" --quiet sh -c 'printf "child-stderr\n" >&2' 2>&1 >/dev/null)
+    check_eq "quiet: wrapped stderr passes through unchanged" \
+        "$QUIET_CHILD_STDERR" "child-stderr"
+
+    QUIET_ERROR=$(cd "$FIXTURE" && \
+        "$CDM" --quiet --no-network --no-proxy true 2>&1 >/dev/null)
+    check "quiet: CDM errors remain visible" "$QUIET_ERROR" '[cdm] error:'
 fi
 
 PROJECT_TEST=$(mktemp -d "${TMPDIR:-/tmp}/cdm_project_report.XXXXXX")
