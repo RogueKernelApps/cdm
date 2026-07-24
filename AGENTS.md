@@ -19,7 +19,7 @@ Read only the references relevant to the task:
 - Use TDD for behavior changes: demonstrate the failing expectation, make the smallest production change, then refactor with tests green.
 - Prefer deep modules with narrow interfaces. Keep typed argument parsing and generated completion in `cli.rs`, top-level dispatch in `main.rs`, invocation orchestration in `invocation.rs`, and do not duplicate access, app-discovery, worktree, proxy, or VM policy there.
 - Resolve filesystem policy once in `access.rs`. Native and VM adapters translate the resolved policy; they do not invent different policy. The configuration `import` array stays beneath the pinned user profile root, applies in document order before the current file, and keeps each declaring-file path anchor.
-- Keep bundled profiles as transparent managed JSON refreshed by non-interactive `cdm setup`. Known IDs are directly selectable; do not add profile detection, enablement registries, migrations, or legacy schema handling.
+- Keep the terminal-only known-app detection and toggle-selection phases of `cdm setup` side-effect-free. `setup.rs` owns detection/menu interaction; `config.rs` owns selected bundled JSON, the transparent managed `~/.cdm/base.json`, safe reruns, and runtime layering before user global policy. Preserve user policy and unknown files. Never execute detected tools or add an opaque registry, migration, or legacy schema handling.
 - Keep real secret mappings in host memory and out of sandbox-visible files, logs, command lines, and errors.
 - Preserve argv boundaries. Shell syntax requires the caller to request a shell explicitly.
 - Surface malformed input, setup failures, and incomplete cleanup. Do not turn failures into warnings or success-shaped results.

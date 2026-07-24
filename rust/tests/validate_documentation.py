@@ -170,17 +170,20 @@ def check_profile_contract(
             "built-in profile catalog mismatch: "
             f"expected {', '.join(PROFILE_IDS)}, found {', '.join(sorted(source_ids))}"
         )
-    if "materialize_bundled_profiles_in" not in setup_source:
-        errors.append("rust/src/setup.rs does not materialize bundled profiles")
+    for marker, description in (
+        ("materialize_setup_selection_in", "selected bundled profile materialization"),
+        ("detect_profiles", "known-app detection"),
+        ("dialoguer", "interactive toggle menu"),
+        ("IsTerminal", "terminal validation"),
+    ):
+        if marker not in setup_source:
+            errors.append(f"rust/src/setup.rs missing {description}")
     for marker in (
         "setup-profiles.json",
         "enabled_profile_ids",
         "SetupProfilesRegistry",
         "read_setup_profiles",
         "write_setup_profiles",
-        "detect_profiles",
-        "dialoguer",
-        "IsTerminal",
     ):
         if marker in config_source or marker in setup_source:
             errors.append(f"legacy profile contract remains in source: {marker}")
@@ -189,7 +192,13 @@ def check_profile_contract(
         if text is None:
             errors.append(f"missing profile contract document: {name}")
             continue
-        for marker in ("`import`", "_warning", "~/.cdm/profiles", *PROFILE_IDS):
+        for marker in (
+            "`import`",
+            "_warning",
+            "~/.cdm/base.json",
+            "~/.cdm/profiles",
+            *PROFILE_IDS,
+        ):
             if marker not in text:
                 errors.append(f"{name}: missing profile contract marker {marker}")
         for marker in ("setup-profiles.json", "enabled_profile_ids"):

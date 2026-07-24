@@ -21,7 +21,7 @@ CDM wraps any command in an OS-native sandbox. By default it uses direct network
 cdm <command> [args...]           # Shorthand: run command in sandbox
 cdm run [flags] <command> [args]  # Explicit run with flags
 cdm config                        # Generate default config at ~/.cdm/config.json
-cdm setup                         # Refresh bundled access-profile JSON
+cdm setup                         # Select detected harness profiles interactively
 cdm trust                         # Trust the nearest project config's exact bytes
 cdm project                       # Report discovered root, kind, and config
 cdm completions <bash|zsh|fish>   # Write shell completion source to stdout
@@ -31,26 +31,52 @@ cdm help                          # Print usage
 
 If no command is given, CDM prints help and exits successfully. `cdm run` without a command launches the user's `$SHELL` (fallback: `/bin/bash`).
 
-`cdm config` is create-only and must not overwrite an existing configuration. When it creates the default policy directory, that directory has mode 0700 so bundled-profile setup can use it safely. `cdm setup` is a distinct argument-free built-in and must never modify the global config. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
+`cdm config` is create-only and must not overwrite an existing configuration. When it creates the default policy directory, that directory has mode 0700 so bundled-profile setup can use it safely. `cdm setup` is a distinct argument-free interactive built-in. It owns only `~/.cdm/base.json` and known files under `~/.cdm/profiles/bundled/`; it must never modify the global config or a `CDM_CONFIG_PATH` file. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
 
-Configuration precedence is built-in defaults, global imports then the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), materialized bundled profiles explicitly selected left-to-right with `--profile`, named global presets selected left-to-right, trusted project imports then the nearest project `.cdm/config.json` discovered from the original launch directory, and CLI flags. A document's `import` array names user-controlled files beneath `~/.cdm/profiles/`; expansion is recursive depth-first in listed order, imported documents merge left-to-right, and the importing document merges last. Top-level names are relative to the profile root and nested names to the importing profile directory; a literal `~/.cdm/profiles/` prefix restarts resolution from that root. Other absolute names and traversal components are invalid. Path arrays are additive and deduplicated in encounter order; maps merge with later keys winning; other explicitly supplied fields replace the lower layer. Global/bundled/user-profile/preset relative paths resolve from `$HOME`; paths declared directly in project config resolve from the project root, and CLI relative paths from the effective workspace. Built-in profile and user preset namespaces are independent. Project and nested presets plus imports inside presets are invalid. Unknown profile IDs, unknown presets, missing/malformed/unknown-field/linked/unsafe-permission imports, and import cycles are errors before child execution. Hard denials cannot be removed by a higher layer. A wrapped executable never implies a profile.
+Configuration precedence is built-in defaults, managed-base imports then `~/.cdm/base.json`, global imports then the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), materialized bundled profiles explicitly selected left-to-right with `--profile`, named global presets selected left-to-right, trusted project imports then the nearest project `.cdm/config.json` discovered from the original launch directory, and CLI flags. A document's `import` array names user-controlled files beneath `~/.cdm/profiles/`; expansion is recursive depth-first in listed order, imported documents merge left-to-right, and the importing document merges last. Top-level names are relative to the profile root and nested names to the importing profile directory; a literal `~/.cdm/profiles/` prefix restarts resolution from that root. Other absolute names and traversal components are invalid. Path arrays are additive and deduplicated in encounter order; maps merge with later keys winning; other explicitly supplied fields replace the lower layer. Global/bundled/user-profile/preset relative paths resolve from `$HOME`; paths declared directly in project config resolve from the project root, and CLI relative paths from the effective workspace. Built-in profile and user preset namespaces are independent. Project and nested presets plus imports inside presets are invalid. Unknown profile IDs, unknown presets, missing/malformed/unknown-field/linked/unsafe-permission imports, and import cycles are errors before child execution. Hard denials cannot be removed by a higher layer. A wrapped executable never implies a profile.
 An imported managed bundled file retains `[profile:ID]` provenance and optional-state semantics instead of inheriting the global or project origin of the document that imported it.
 
-Setup materializes exactly `pi.json`, `claude.json`, `codex.json`, and
-`copilot.json` under `~/.cdm/profiles/bundled/`; `claude` is the catalog ID while
-“Claude Code” is display text. Every mode-0600 file is readable valid JSON and
-contains the string `_warning`: “This is a CDM-managed bundled profile. CDM
-upgrades may overwrite this file. Extend or override it from a profile you own
-instead of editing it.” Setup is non-interactive and refreshes all four files on
-every successful invocation. Writes use mode-0600 create-new temporary files and
-atomic replacement beneath real mode-0700 `profiles` and `bundled` directories.
-The global config, user profiles, and unknown bundled files are preserved.
-Incomplete refresh is an error and is safely retryable. The compiled catalog
-remains authoritative for IDs and generated contents. Runtime loads selected
-profile JSON without a compiled policy fallback; a missing selected file or
-profile directory fails with an instruction to run `cdm setup`. Every known ID
-is directly selectable after materialization. There is no profile enablement
-registry, detection behavior, migration path, or accepted legacy profile schema.
+Setup requires terminals on stdin and stderr. It detects known applications in
+catalog order (`pi`, `claude`, `codex`, `copilot`) by checking whether the fixed
+executable name is an executable regular file on `PATH` or a fixed state marker
+exists below `$HOME`; candidates are never launched and directories are not
+recursively scanned. Only detected entries appear in the toggle menu, with all
+entries initially checked. Arrow keys navigate, Space toggles, Enter accepts,
+and Escape or `q` cancels. Cancellation and non-terminal use exit with status 2
+and make no filesystem change. No detections succeed with no change. An accepted
+empty selection is distinct: it writes an empty base import array and removes
+all known bundled profile files.
+
+On acceptance, setup materializes only selected known files under
+`~/.cdm/profiles/bundled/`, removes deselected known files, and publishes
+`~/.cdm/base.json` with exactly `_warning` plus an ordered `import` array of one
+`bundled/<id>.json` entry per selection. `claude` is the catalog ID while
+“Claude Code” is display text. The managed base warning is: “This is a
+CDM-managed base configuration. `cdm setup` may overwrite this file. Put user
+policy in `~/.cdm/config.json`.” Every bundled mode-0600 file is readable valid
+JSON and contains the string `_warning`: “This is a CDM-managed bundled profile.
+CDM upgrades may overwrite this file. Extend or override it from a profile you
+own instead of editing it.” Writes use mode-0600 create-new temporary files,
+file sync, and atomic replacement beneath real mode-0700 setup directories.
+Selected files are published before the base; stale deselected files are removed
+without affecting policy because the new base does not import them. Incomplete
+cleanup is an error and safely retryable.
+
+A pre-existing base is replaceable only when it is a private regular single-link
+file with the exact managed warning, no unknown fields, and unique known imports
+in catalog order. All existing known profile targets and setup directories are
+validated before the first write. Unsafe ownership, permissions, symlinks, hard
+links, FIFOs, or other non-regular state fail closed. Setup preserves the global
+config, any `CDM_CONFIG_PATH` file, trust store, user profiles, unknown bundled
+files, and unrelated files. It does not read, write, migrate, or
+interpret an opaque setup registry or any legacy schema.
+
+Runtime loads managed-base imports before user global policy. Imported bundled
+files retain `[profile:ID]` provenance. The compiled catalog remains authoritative
+for IDs and generated contents, but runtime has no compiled policy fallback: a
+missing selected file or profile directory fails with an instruction to run
+`cdm setup`. `--profile` remains directly usable as an additional explicit
+selection. A wrapped executable never implies a profile.
 
 Bundled profiles divide existing per-tool state into read-only customization
 roots and narrower read/write authentication, settings, trust, session/history,
@@ -73,7 +99,7 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 | `--iso` | Hide host user data outside the workspace and explicit grants. Composes with `--ro`. |
 | `-r`, `--allow-ro <path>` | Add a read-only path grant (repeatable). |
 | `-w`, `--allow-rw <path>` | Add a read/write path grant (repeatable). |
-| `--profile <id>` | Apply an enabled compiled built-in access profile (repeatable, left-to-right). |
+| `--profile <id>` | Explicitly apply a materialized built-in access profile in addition to setup-selected base policy (repeatable, left-to-right). |
 | `--preset <name>` | Apply a named global configuration preset (repeatable, left-to-right). |
 | `--app <path.app>` | Explicit compatibility spelling for automatic macOS `.app` command detection. |
 | `--monitor` | Stream sandbox denial events to a private log shown in a separate terminal viewer. |

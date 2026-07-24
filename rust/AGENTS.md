@@ -9,7 +9,7 @@ Read the repository-root `AGENTS.md` first.
   kinds, and launch-time device/inode verification. Adapters must not
   canonicalize or reclassify policy paths after resolution.
 - `src/app.rs` owns macOS application-bundle discovery.
-- `src/setup.rs` is a non-interactive bundled-profile materialization command; `config.rs` owns the compiled catalog, generated JSON, secure imports, and layering. There is no enablement registry or legacy profile schema. Invocation loads materialized bundled policy and must not hide a missing file behind a compiled fallback.
+- `src/setup.rs` owns terminal validation, fixed known-app detection without execution, and the catalog-ordered toggle menu. `config.rs` owns the catalog, selected bundled JSON, recognizable managed `~/.cdm/base.json`, safe stale-known-file cleanup, secure imports, and base-before-global layering. Preserve user/unknown files; never add an opaque registry, migration, or legacy schema. Runtime must not hide a missing selected file behind a compiled fallback.
 - `src/worktree.rs` owns Git-visible state snapshotting, branch reservation, descriptor-relative no-follow finalization, and cleanup.
 - `src/status.rs` owns routine startup and notable completion presentation. It renders typed provenance from `origin.rs` and the already-resolved grant metadata from `access.rs`; it must not resolve policy paths itself. Resolved scalar values use speech marks, while flags, paths, branch names, and actionable commands use escaped backticks. Quiet mode suppresses only routine status; errors, wrapped output, and explicitly requested diagnostics remain visible.
 - `src/trusted_exec.rs` owns validation and identity pinning for host-side helper executables. Never add a PATH-resolved pre/post-sandbox helper elsewhere.

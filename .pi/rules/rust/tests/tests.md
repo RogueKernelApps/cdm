@@ -23,7 +23,7 @@ This directory tests user-visible behavior through real sandbox adapters. Every 
 - Keep assertions portable across supported architectures and public/physical temporary-path aliases.
 - Run `tests/validate_documentation.py` when suite names, environment switches, commands, coverage descriptions, or CLI snapshots change.
 - Keep `18_builtin_commands.sh` synchronized with every documented built-in and suitable for release acceptance against an installed prefix: assert status, representative output, and no sandbox dispatch.
-- Profile coverage must prove non-interactive setup materializes every bundled file, known IDs need no registry, managed refresh preserves user files, and missing/unsafe profile state fails closed. Do not add legacy-registry fixtures.
+- Profile coverage must use an isolated `HOME`/`PATH` and PTY to prove the exact artifact shows detected known apps, defaults them checked, honors toggles/cancellation, writes exact ordered `~/.cdm/base.json` imports, materializes only selected files, removes deselected known files, preserves user/unknown files, and fails closed on missing/unsafe state. Do not add obsolete-registry fixtures or compatibility expectations.
 
 ### Subdirectories
 

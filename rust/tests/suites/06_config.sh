@@ -165,29 +165,64 @@ else
     skip "config: global and project grant layering" "native sandbox unavailable"
 fi
 
-# Test: built-in profiles remain explicit and independent from same-named user presets.
+# Test: setup-selected profiles load automatically and remain independent from
+# same-named user presets and explicit --profile selections.
 if has_native; then
+    PYTHON_BIN=$(python3 -c 'import sys; print(sys.executable)')
     SETUP_PROFILE_HOME=$(mktemp -d "$TEST_TMP/cdm_profile_setup_test.XXXXXX")
-    SETUP_OUTPUT=$(HOME="$SETUP_PROFILE_HOME" "$CDM" setup 2>&1)
-    if [ "$?" -eq 0 ] && grep -Fq 'Bundled profiles refreshed:' <<<"$SETUP_OUTPUT" && \
+    SETUP_BIN="$SETUP_PROFILE_HOME/detected-bin"
+    mkdir -p "$SETUP_BIN"
+    for executable in pi codex; do
+        printf '#!/bin/sh\nexit 99\n' > "$SETUP_BIN/$executable"
+        chmod 700 "$SETUP_BIN/$executable"
+    done
+    SETUP_OUTPUT=$(HOME="$SETUP_PROFILE_HOME" PATH="$SETUP_BIN" \
+        "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "0d" 2>&1)
+    SETUP_STATUS=$?
+    SETUP_IMPORTS=$("$PYTHON_BIN" - "$SETUP_PROFILE_HOME/.cdm/base.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["import"])
+PY
+)
+    if [ "$SETUP_STATUS" -eq 0 ] && grep -Fq 'Enabled profiles: pi, codex' <<<"$SETUP_OUTPUT" && \
         [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json" ] && \
-        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/claude.json" ] && \
         [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/codex.json" ] && \
-        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/copilot.json" ]; then
-        printf "  ${GREEN}PASS${NC} config: setup materializes the complete bundled catalog\n"; PASS=$((PASS + 1))
+        [ ! -e "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/claude.json" ] && \
+        [ "$SETUP_IMPORTS" = "['bundled/pi.json', 'bundled/codex.json']" ]; then
+        printf "  ${GREEN}PASS${NC} config: setup materializes and imports only selected profiles\n"; PASS=$((PASS + 1))
     else
-        printf "  ${RED}FAIL${NC} config: setup did not materialize the complete bundled catalog\n"; FAIL=$((FAIL + 1))
+        printf "  ${RED}FAIL${NC} config: setup selection did not produce exact profile state\n"; FAIL=$((FAIL + 1))
     fi
+    mkdir -p "$SETUP_PROFILE_HOME/.pi/agent" "$SETUP_PROFILE_HOME/.codex"
+    AUTO_OUTPUT=$(cd "$SETUP_PROFILE_HOME" && env -u CDM_CONFIG_PATH \
+        HOME="$SETUP_PROFILE_HOME" "$CDM" --no-proxy true 2>&1)
+    AUTO_STATUS=$?
+    if [ "$AUTO_STATUS" -eq 0 ] && grep -Fq '[profile:pi]' <<<"$AUTO_OUTPUT" && \
+        grep -Fq '[profile:codex]' <<<"$AUTO_OUTPUT"; then
+        printf "  ${GREEN}PASS${NC} config: managed base applies selected profiles without CLI flags\n"; PASS=$((PASS + 1))
+    else
+        printf "  ${RED}FAIL${NC} config: managed base did not apply selected profiles automatically\n"; FAIL=$((FAIL + 1))
+    fi
+    printf 'user global bytes\n' > "$SETUP_PROFILE_HOME/.cdm/config.json"
     printf 'personal bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json"
     printf 'unknown bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/unknown.json"
     printf 'modified managed bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json"
-    HOME="$SETUP_PROFILE_HOME" "$CDM" setup >/dev/null
-    if [ "$(cat "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json")" = "personal bytes" ] && \
+    remove_test_path "$SETUP_BIN/pi"
+    remove_test_path "$SETUP_BIN/codex"
+    printf '#!/bin/sh\nexit 99\n' > "$SETUP_BIN/claude"
+    chmod 700 "$SETUP_BIN/claude"
+    HOME="$SETUP_PROFILE_HOME" PATH="$SETUP_BIN" \
+        "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "201b5b421b5b42200d" >/dev/null
+    if [ "$(cat "$SETUP_PROFILE_HOME/.cdm/config.json")" = "user global bytes" ] && \
+        [ "$(cat "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json")" = "personal bytes" ] && \
         [ "$(cat "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/unknown.json")" = "unknown bytes" ] && \
-        grep -Fq '"_warning"' "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json"; then
-        printf "  ${GREEN}PASS${NC} config: setup refreshes managed files and preserves user files\n"; PASS=$((PASS + 1))
+        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/claude.json" ] && \
+        [ ! -e "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json" ] && \
+        [ ! -e "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/codex.json" ]; then
+        printf "  ${GREEN}PASS${NC} config: setup rerun removes deselected known files and preserves user files\n"; PASS=$((PASS + 1))
     else
-        printf "  ${RED}FAIL${NC} config: setup refresh damaged unmanaged profile state\n"; FAIL=$((FAIL + 1))
+        printf "  ${RED}FAIL${NC} config: setup rerun damaged or retained the wrong profile state\n"; FAIL=$((FAIL + 1))
     fi
     remove_test_path "$SETUP_PROFILE_HOME"
 
@@ -200,7 +235,14 @@ if has_native; then
     mkdir -p "$PROFILE_HOME/.cdm" "$PROFILE_HOME/.pi/agent/sessions" \
         "$PROFILE_PROJECT" "$PROFILE_PRESET_STATE" "$PROFILE_PERSONAL_STATE" "$PROFILE_WORK_STATE"
     chmod 700 "$PROFILE_HOME/.cdm"
-    HOME="$PROFILE_HOME" "$CDM" setup >/dev/null
+    PROFILE_SETUP_BIN="$PROFILE_ROOT/detected-bin"
+    mkdir -p "$PROFILE_SETUP_BIN"
+    for executable in pi codex; do
+        printf '#!/bin/sh\nexit 99\n' > "$PROFILE_SETUP_BIN/$executable"
+        chmod 700 "$PROFILE_SETUP_BIN/$executable"
+    done
+    HOME="$PROFILE_HOME" PATH="$PROFILE_SETUP_BIN" \
+        "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "0d" >/dev/null
     printf 'profile instructions\n' > "$PROFILE_HOME/.pi/agent/AGENTS.md"
     printf '{"import":["bundled/codex.json"],"paths":{"allow_rw":["%s"]}}\n' "$PROFILE_PERSONAL_STATE" \
         > "$PROFILE_HOME/.cdm/profiles/personal.json"
@@ -241,10 +283,10 @@ if has_native; then
     if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
         CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
         "$CDM" --no-proxy sh -c \
-        "touch '$PROFILE_HOME/.pi/agent/sessions/inferred-profile'") >/dev/null 2>&1; then
-        printf "  ${RED}FAIL${NC} config: wrapped executable state was granted without --profile\n"; FAIL=$((FAIL + 1))
+        "touch '$PROFILE_HOME/.pi/agent/sessions/setup-profile'") >/dev/null 2>&1; then
+        printf "  ${GREEN}PASS${NC} config: setup-selected profile applies without --profile\n"; PASS=$((PASS + 1))
     else
-        printf "  ${GREEN}PASS${NC} config: profiles are never inferred from wrapped commands\n"; PASS=$((PASS + 1))
+        printf "  ${RED}FAIL${NC} config: setup-selected profile was not applied automatically\n"; FAIL=$((FAIL + 1))
     fi
 
     if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \

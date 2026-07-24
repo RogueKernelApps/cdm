@@ -34,8 +34,8 @@ The orchestration order is deliberate: the best-effort command preflight runs be
 | `project.rs` | Discover the nearest project config/root and report deterministic project kind | Launch path → `ProjectContext` |
 | `app.rs` | Resolve a macOS app executable and verified, narrowly inferred writable state | `.app` + trusted home root → `AppPlan` |
 | `access.rs` | Resolve filesystem modes, grants, runtime roots, and hard denials | `ResolvedAccessPolicy` |
-| `config.rs` | Defaults, contained profile imports, bundled-profile materialization, trusted preset/project layering, exact-byte project trust store | Global + profiles + presets + trusted `.cdm/config.json` → `LoadedConfig` |
-| `setup.rs` | Refresh transparent bundled profile JSON without interpreting or selecting tools | Compiled catalog → bundled files |
+| `config.rs` | Defaults, managed-base loading, contained profile imports, selected bundled-profile materialization, trusted preset/project layering, exact-byte project trust store | Base + global + profiles + presets + trusted `.cdm/config.json` → `LoadedConfig` |
+| `setup.rs` | Structurally detect known harnesses and collect an interactive toggle selection | Compiled catalog + terminal selection → selected IDs |
 | `origin.rs` | Name the exact source of an effective policy value | Built-in, CLI, config-layer, derived, or app provenance |
 | `guard.rs` | Best-effort exact-token command preflight | Command argv |
 | `secrets.rs` | Detect secrets and create deterministic real/fake maps | Host env and discovered values |
@@ -87,28 +87,43 @@ launch, and host-only helpers receive a cleared, narrowly rebuilt environment.
 | Base rootfs cache | Across invocations | No | Cloned, never run directly |
 | Disposable VM rootfs | One invocation | Fake env/config only | Guest root |
 | Git worktree | One worktree invocation | Project-dependent | Yes; tracked and non-ignored untracked state |
-| Bundled and loaded profile files | Across invocations | No | No; files and narrow containing directories are hard write-denied |
+| Managed base, bundled, and loaded profile files | Across invocations | No | No; files and narrow containing directories are hard write-denied |
 
 Worktree sessions begin at the original `HEAD`, create a no-checkout worktree, copy the caller's materialized tracked filesystem entries plus non-ignored untracked files without Git diff/checkout filters, and create the equivalent relative execution directory. Sparse `S`/`s` paths absent from the caller stay absent and retain their base-index entries; ordinary absent tracked paths remain observed deletions. Ignored paths are not copied. A branch is reserved before sandbox entry, so repeated and concurrent sessions cannot collide. The sandbox receives ordinary project data at the selected workspace access level, while its `.git` gitfile and the pinned actual/common Git directories remain hard write-denied. No-change sessions delete the reservation. Changed sessions pin the worktree root as a directory descriptor, walk every relative path with no-follow descriptor operations, hash regular files from already-open descriptors, and hash symlink target bytes without following them. A tracked directory replaced by a symlink becomes one mode-`120000` entry and its former descendants are removed. The resulting entries and observed deletions are overlaid onto a private index initialized from the base commit, then written as a tree and single-parent `commit-tree` commit before compare-and-swapping the reserved ref. Every trusted Git process uses the identity-pinned system executable and a cleared environment; repository hooks, clean/smudge/process filters, signing helpers, fsmonitor, prompts, optional locks, and pagers cannot become post-sandbox host execution. This deliberately means filter-materialized bytes that differ from the stored blob, such as Git LFS content, are committed raw rather than passed through an untrusted clean filter. Command failure does not discard useful changes, while metadata drift or another finalization failure changes an otherwise successful CDM exit into an error.
 
 ## Filesystem access model
 
-The typed CLI and layered JSON configuration are translated once into `ResolvedAccessPolicy`, after every invocation mutation and sensitive-path discovery; adapters borrow that immutable snapshot rather than reinterpreting flags or live filesystem state. Project discovery happens from the original launch directory before `--worktree` creates a temporary worktree. `cdm project` reports the discovered root plus a fixed marker-based kind and never changes policy. Configuration precedence is built-ins, global imports then global configuration (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), explicitly selected materialized bundled profiles in CLI order, repeatable global named presets in CLI order, trusted project imports then the nearest project `.cdm/config.json`, and CLI flags. Each document's `import` array recursively expands depth-first in listed order from the pinned `~/.cdm/profiles` root; nested relative names use the importing profile's directory, a literal `~/.cdm/profiles/` prefix restarts from the root, imported layers merge left-to-right, and each importing document merges last. Path lists are additive. `access.rs` resolves global, preset, bundled, and imported-profile relatives from `$HOME`; only declarations directly in project config use the project root, and CLI relatives use the effective workspace. Missing optional profile-state paths are omitted; missing profile/config/CLI inputs fail closed. Hard-denial snapshots retain origin, existence/kind, the lexical name, and its canonical or would-be canonical target; the workspace, grants, and runtime roots retain captured device/inode identity and kind as well. Both denial spellings are applied last. Access resolution rejects non-UTF-8 policy paths before dispatch because not every backend can represent them exactly; command argv remains byte-preserving. Immediately before dispatch CDM rejects any frozen object whose identity changed. Adapters then use the captured path and kind and never re-run filesystem classification or canonicalization.
+The typed CLI and layered JSON configuration are translated once into `ResolvedAccessPolicy`, after every invocation mutation and sensitive-path discovery; adapters borrow that immutable snapshot rather than reinterpreting flags or live filesystem state. Project discovery happens from the original launch directory before `--worktree` creates a temporary worktree. `cdm project` reports the discovered root plus a fixed marker-based kind and never changes policy. Configuration precedence is built-ins, managed-base imports then `~/.cdm/base.json`, global imports then global configuration (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), explicitly selected materialized bundled profiles in CLI order, repeatable global named presets in CLI order, trusted project imports then the nearest project `.cdm/config.json`, and CLI flags. Each document's `import` array recursively expands depth-first in listed order from the pinned `~/.cdm/profiles` root; nested relative names use the importing profile's directory, a literal `~/.cdm/profiles/` prefix restarts from the root, imported layers merge left-to-right, and each importing document merges last. Path lists are additive. `access.rs` resolves global, preset, bundled, and imported-profile relatives from `$HOME`; only declarations directly in project config use the project root, and CLI relatives use the effective workspace. Missing optional profile-state paths are omitted; missing profile/config/CLI inputs fail closed. Hard-denial snapshots retain origin, existence/kind, the lexical name, and its canonical or would-be canonical target; the workspace, grants, and runtime roots retain captured device/inode identity and kind as well. Both denial spellings are applied last. Access resolution rejects non-UTF-8 policy paths before dispatch because not every backend can represent them exactly; command argv remains byte-preserving. Immediately before dispatch CDM rejects any frozen object whose identity changed. Adapters then use the captured path and kind and never re-run filesystem classification or canonicalization.
 Layers loaded from the managed `bundled/` namespace retain `Origin::Profile(ID)` even when reached through another document's imports; this preserves optional-state behavior and source reporting through personal/work/project composition.
 
 Project policy is an explicit trust boundary. `cdm trust` opens a regular, single-link project config with `O_NOFOLLOW`, verifies and parses bytes read from that same descriptor, and atomically records their SHA-256 digest in a mode-0600 store outside the workspace. Loading repeats the one-open read/hash/parse flow; any byte change invalidates trust. The trusted bytes fix the ordered names of imports, but imports can only resolve to host-owned files below the pinned `~/.cdm/profiles` root; project-local import graphs are excluded because trust does not bind their bytes and edges. Global presets are trusted host policy, so project files cannot declare them and presets cannot import or nest. Imported files are current-user-owned, non-group/world-writable, and opened descriptor-relatively without following symlinks; other absolute/traversing names, missing or malformed documents, unknown fields, hard links, and cycles are rejected. Policy files and every narrow containing profile directory are hard write-denied in the child, preventing direct writes, symlink/hard-link substitution, and parent rename/swap bypasses. A custom global config is accepted only beneath a real, user-owned, non-group/world-writable dedicated directory; direct broad-root placement fails before sandbox startup.
 
-`setup.rs` is a narrow materialization command. It asks `config.rs` to regenerate
-the four mode-0600 JSON documents under the private
-`~/.cdm/profiles/bundled/` directory and reports the resulting path. Each
-generated document carries a string `_warning` that upgrades may overwrite it.
-The compiled catalog remains the authority for IDs and generated bytes, while
-invocation loads only those bytes and asks for `cdm setup` if a selected file is
-absent. Per-file create-and-rename is atomic; user profiles and unknown bundled
-files are preserved. There is no enablement registry, detection path, migration,
-or legacy profile schema. Built-in profile and user preset namespaces remain
-independent. Loaded profile files and narrow parents join unconditional hard
-write denials.
+`setup.rs` owns only the interactive edge. It requires terminal stdin and
+stderr, structurally detects fixed known executable names or fixed `$HOME`
+markers without launching tools, renders the catalog-ordered all-checked toggle
+menu, normalizes accepted indices, and passes selected IDs to `config.rs`.
+Cancellation, non-terminal use, and invalid selector output return before
+mutation; no detections report a successful no-change result.
+
+`config.rs` owns setup publication. After validating the complete existing
+managed graph, it atomically refreshes only selected mode-0600 JSON documents
+under private `~/.cdm/profiles/bundled/`, publishes the transparent
+`~/.cdm/base.json` whose ordered `import` array names exactly those profiles,
+and removes only deselected known files. The base path is distinct from the
+user-owned global config. A rerun accepts only a recognizably managed, private,
+single-link base document; user profiles, unknown bundled files, global policy,
+trust state, and unrelated files are preserved. Selected files are
+published before the base, so the new base never references a profile that was
+not written; stale-file cleanup after base publication cannot leave stale policy
+active. Publication failures are surfaced and retryable.
+
+At runtime `config.rs` validates and loads the managed base before global policy,
+using the existing contained import expander so generated bundled layers retain
+`Origin::Profile(ID)`. The base, profile files, and their narrow parents join
+unconditional hard write denials. Missing selected files fail with `cdm setup`
+guidance; the compiled catalog is never a runtime fallback. There is no opaque
+enablement registry, migration, or accepted legacy profile schema. Explicit
+`--profile` and preset namespaces remain independent.
 
 The effective workspace is read/write by default and read-only under `--ro`. Host access is normal by default—readable but not writable outside explicit writable roots—and allowlisted under `--iso`. `--iso --ro` therefore isolates host data and makes the workspace read-only. Independently, CDM creates a unique mode-0700 session beneath an invoking-user-owned private runtime root and overrides `TMPDIR`, `TMP`, and `TEMP` for every child. When requested, staged secret files and proxy material join VM plans and monitor logs beneath this session rather than becoming independent raw-temp artifacts. Adapters expose the session as one resolved runtime capability, so `--iso` can consume exact staged files without granting their host originals.
 

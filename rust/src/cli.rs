@@ -224,7 +224,7 @@ pub fn write_help(writer: &mut impl io::Write) -> io::Result<()> {
     writeln!(writer, "BUILT-IN COMMANDS:")?;
     writeln!(
         writer,
-        "    setup       Refresh transparent bundled coding-harness profiles"
+        "    setup       Select detected coding harnesses and refresh their profiles"
     )?;
     writeln!(writer, "                IDs: pi, claude, codex, copilot")?;
     writeln!(

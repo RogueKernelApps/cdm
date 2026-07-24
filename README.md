@@ -221,8 +221,9 @@ CDM keeps editable policy separate from the state written by `cdm setup` and
 |---|---|---|
 | Global user policy and named presets | `~/.cdm/config.json` (or `CDM_CONFIG_PATH`) | You; `cdm config` creates the defaults once |
 | Nearest project policy | `<project>/.cdm/config.json` | The repository; you approve it with `cdm trust` |
+| Setup-selected base policy | `~/.cdm/base.json` | `cdm setup`; imports exactly the selected bundled profiles |
 | User-owned reusable profiles | `~/.cdm/profiles/*.json` | You |
-| Bundled profile policy | `~/.cdm/profiles/bundled/{pi,claude,codex,copilot}.json` | `cdm setup`; upgrades may overwrite these files |
+| Bundled profile policy | `~/.cdm/profiles/bundled/{pi,claude,codex,copilot}.json` | `cdm setup`; only selected known files are retained |
 | Approved project-config digests | `~/.cdm/trusted-projects.json` | `cdm trust` |
 
 ### Global and project policy
@@ -329,32 +330,47 @@ cdm trust
 
 Any byte change requires `cdm trust` again. Each document's `import` entries apply
 immediately before that document. Overall precedence is built-in defaults,
-global imports and global config, explicitly selected bundled profiles,
-selected presets, trusted project imports and project config, then CLI flags.
+managed-base imports and `~/.cdm/base.json`, global imports and global config,
+explicitly selected bundled profiles, selected presets, trusted project imports
+and project config, then CLI flags.
 
 ### Bundled profile setup
 
-Run `cdm setup` after installation or upgrade. It is non-interactive and
-refreshes all four readable bundled JSON files. Setup never rewrites the global
-config, user-owned profiles, or unknown files in the bundled directory. Each
-managed file contains a valid-JSON `_warning` stating that upgrades may
-overwrite it; extend or override it from a user-owned profile instead of editing
-it.
+Run `cdm setup` after installation or upgrade from an interactive terminal. CDM
+structurally detects known harnesses from executable files on `PATH` and fixed
+state markers under `$HOME`; it never launches a candidate. The toggle menu
+shows only detected `pi`, `claude`, `codex`, and `copilot` entries in catalog
+order, initially checked. Confirming materializes only the selected mode-`0600`
+bundled JSON files and writes the transparent mode-`0600`
+`~/.cdm/base.json`, whose ordered `import` array names exactly those files.
+An accepted empty selection writes an empty array and removes known bundled
+files. No detections make no change. Escape or `q` cancels with status 2 and no
+change; non-terminal use is rejected before mutation.
 
-The available IDs are `pi`, `claude`, `codex`, and `copilot`. Every known ID is
-directly usable after materialization; there is no enablement registry or legacy
-profile schema. CDM never infers a profile from the wrapped executable. Apply
-profiles explicitly, repeating `--profile` when they should compose:
+Setup never rewrites `~/.cdm/config.json` (including a path selected through
+`CDM_CONFIG_PATH`), user-owned profiles, unknown bundled files, the trust store,
+or unrelated files. A rerun refreshes selected known
+files and removes deselected known files. Existing `base.json` must be a private,
+recognizable CDM-managed document containing only the exact warning and
+catalog-ordered known imports; otherwise setup fails closed before changing
+profile state. Each bundled profile contains a valid-JSON `_warning` stating
+that upgrades may overwrite it; extend or override it from a user-owned profile
+instead of editing it.
+
+Selected profiles apply automatically through `base.json`. `--profile <id>`
+remains available for an additional explicit selection, and built-in profile
+names remain independent from user preset names:
 
 ```bash
-cdm --profile pi pi
+cdm pi
 cdm --profile claude --preset team-policy claude
 cdm --profile codex --profile copilot coding-agent-wrapper
 ```
 
-Built-in profile names and user preset names are independent. Rerun `cdm setup`
-to restore a missing or edited bundled file; invocation fails with that
-instruction rather than falling back to hidden compiled policy.
+There is no opaque enablement registry, migration path, or accepted legacy
+schema. CDM never infers policy from the wrapped executable. If a selected
+bundled file is missing, invocation fails with an instruction to rerun
+`cdm setup` rather than falling back to hidden compiled policy.
 
 For completeness, trusting a project updates the other managed state file:
 
@@ -370,8 +386,8 @@ For completeness, trusting a project updates the other managed state file:
 ```
 
 Do not add entries by hand: `cdm trust` records the canonical config path and
-SHA-256 digest atomically. Both managed files use mode `0600` and live under the
-mode-`0700` `~/.cdm` directory.
+SHA-256 digest atomically. The base config, trust store, and bundled profiles use
+mode `0600` beneath mode-`0700` setup directories.
 
 ## Reports and monitoring
 

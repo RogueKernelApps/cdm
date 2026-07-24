@@ -30,11 +30,60 @@ for shell in bash zsh fish; do
     assert_builtin "completions/$shell" 0 "setup" completions "$shell"
 done
 
-assert_builtin "setup" 0 "Bundled profiles refreshed:" setup
-for profile in pi claude codex copilot; do
-    check_eq "setup: materializes $profile" \
-        "$(test -f "$BUILTIN_ROOT/home/.cdm/profiles/bundled/$profile.json"; echo $?)" "0"
+assert_builtin "setup without a terminal" 2 "requires an interactive terminal" setup
+
+SETUP_BIN="$BUILTIN_ROOT/detected-bin"
+mkdir -p "$SETUP_BIN"
+for executable in pi codex copilot; do
+    printf '#!/bin/sh\nexit 99\n' > "$SETUP_BIN/$executable"
+    chmod 700 "$SETUP_BIN/$executable"
 done
+PYTHON_BIN=$(python3 -c 'import sys; print(sys.executable)')
+SETUP_OUTPUT=$(HOME="$BUILTIN_ROOT/home" PATH="$SETUP_BIN" \
+    "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "1b5b421b5b42200d" 2>&1)
+SETUP_STATUS=$?
+check_eq "setup menu: exits successfully" "$SETUP_STATUS" "0"
+for label in "Pi" "OpenAI Codex CLI" "GitHub Copilot CLI"; do
+    check "setup menu: displays detected $label" "$SETUP_OUTPUT" "$label"
+done
+check "setup menu: reports selected profiles" "$SETUP_OUTPUT" "Enabled profiles: pi, codex"
+check_not "setup menu: omits sandbox dispatch" "$SETUP_OUTPUT" "├─ Sandbox:"
+check_eq "setup menu: materializes pi" \
+    "$(test -f "$BUILTIN_ROOT/home/.cdm/profiles/bundled/pi.json"; echo $?)" "0"
+check_eq "setup menu: materializes codex" \
+    "$(test -f "$BUILTIN_ROOT/home/.cdm/profiles/bundled/codex.json"; echo $?)" "0"
+check_eq "setup menu: leaves copilot unmaterialized" \
+    "$(test ! -e "$BUILTIN_ROOT/home/.cdm/profiles/bundled/copilot.json"; echo $?)" "0"
+BASE_IMPORTS=$("$PYTHON_BIN" - "$BUILTIN_ROOT/home/.cdm/base.json" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["import"])
+PY
+)
+check_eq "setup menu: writes exact ordered base imports" "$BASE_IMPORTS" \
+    "['bundled/pi.json', 'bundled/codex.json']"
+check_eq "setup menu: does not create an opaque registry" \
+    "$(test ! -e "$BUILTIN_ROOT/home/.cdm/setup-profiles.json"; echo $?)" "0"
+BASE_BEFORE=$(cat "$BUILTIN_ROOT/home/.cdm/base.json")
+PI_BEFORE=$(cat "$BUILTIN_ROOT/home/.cdm/profiles/bundled/pi.json")
+CANCEL_OUTPUT=$(HOME="$BUILTIN_ROOT/home" PATH="$SETUP_BIN" \
+    "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "1b" 2>&1)
+CANCEL_STATUS=$?
+check_eq "setup cancellation: exits with usage status" "$CANCEL_STATUS" "2"
+check "setup cancellation: reports no changes" "$CANCEL_OUTPUT" "cancelled; nothing changed"
+check_eq "setup cancellation: preserves base bytes" \
+    "$(cat "$BUILTIN_ROOT/home/.cdm/base.json")" "$BASE_BEFORE"
+check_eq "setup cancellation: preserves profile bytes" \
+    "$(cat "$BUILTIN_ROOT/home/.cdm/profiles/bundled/pi.json")" "$PI_BEFORE"
+Q_CANCEL_OUTPUT=$(HOME="$BUILTIN_ROOT/home" PATH="$SETUP_BIN" \
+    "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "71" 2>&1)
+Q_CANCEL_STATUS=$?
+check_eq "setup q cancellation: exits with usage status" "$Q_CANCEL_STATUS" "2"
+check "setup q cancellation: reports no changes" "$Q_CANCEL_OUTPUT" "cancelled; nothing changed"
+check_eq "setup q cancellation: preserves base bytes" \
+    "$(cat "$BUILTIN_ROOT/home/.cdm/base.json")" "$BASE_BEFORE"
+check_eq "setup q cancellation: preserves profile bytes" \
+    "$(cat "$BUILTIN_ROOT/home/.cdm/profiles/bundled/pi.json")" "$PI_BEFORE"
 
 CONFIG_OUTPUT=$(HOME="$BUILTIN_ROOT/home" CDM_CONFIG_PATH="$BUILTIN_CONFIG" \
     "$CDM" config 2>&1)

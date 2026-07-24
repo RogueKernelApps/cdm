@@ -19,7 +19,7 @@ The host CLI is one Rust binary with deep modules around policy and isolation bo
 - Use `io::Result` with actionable context at process and filesystem boundaries; do not broadly catch or ignore failures.
 - Keep VM-only dependencies and code behind the `vm` feature. Verify both native and `--features vm` builds when shared code changes.
 - Keep focused unit tests beside their owning module; move a distinct or roughly 100-line trailing test module to the matching `src/<module>/tests.rs` without exposing test-only APIs. Test configuration graphs through the loader boundary and setup materialization through its orchestration boundary.
-- Keep bundled-profile setup non-interactive and registry-free; remove obsolete schema code and dependencies rather than preserving compatibility layers.
+- Keep bundled-profile setup terminal-only and registry-free: fixed known-app detection and menu interaction stay in `setup.rs`; selected profile/base publication and runtime loading stay in `config.rs`. Remove obsolete schema code rather than preserving compatibility layers.
 - The baseline is formatting, native tests and Clippy, VM-feature tests and Clippy, documentation validation, and `packaging/tests.sh`. Observable runtime changes also need the owning real integration suite against the exact artifact.
 - Built-in commands require typed CLI/help tests plus `tests/suites/18_builtin_commands.sh` coverage proving they do not fall through to sandbox execution. Advance the product version before post-release runtime work is documented or merged.
 

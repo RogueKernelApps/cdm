@@ -42,13 +42,27 @@ section "Malformed configuration"
 
 CONFIG_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cdm-input-config.XXXXXX")
 
+NON_TTY_HOME="$CONFIG_ROOT/non-tty-home"
+mkdir -p "$NON_TTY_HOME"
+OUT=$(HOME="$NON_TTY_HOME" "$CDM" setup </dev/null 2>&1 >/dev/null)
+RC=$?
+check_eq "setup rejects non-terminal input" "$RC" "2"
+check "non-terminal setup explains the terminal requirement" "$OUT" "interactive terminal"
+check_eq "non-terminal setup does not create policy state" \
+    "$(test ! -e "$NON_TTY_HOME/.cdm"; echo $?)" "0"
+
 SETUP_HOME="$CONFIG_ROOT/setup-home"
 SETUP_OUTSIDE="$CONFIG_ROOT/setup-outside"
-mkdir -p "$SETUP_HOME/.cdm" "$SETUP_OUTSIDE"
+SETUP_BIN="$CONFIG_ROOT/setup-bin"
+mkdir -p "$SETUP_HOME/.cdm" "$SETUP_OUTSIDE" "$SETUP_BIN"
 chmod 700 "$SETUP_HOME/.cdm"
+printf '#!/bin/sh\nexit 99\n' > "$SETUP_BIN/pi"
+chmod 700 "$SETUP_BIN/pi"
 printf 'unchanged\n' > "$SETUP_OUTSIDE/sentinel"
 ln -s "$SETUP_OUTSIDE" "$SETUP_HOME/.cdm/profiles"
-OUT=$(HOME="$SETUP_HOME" "$CDM" setup </dev/null 2>&1 >/dev/null)
+PYTHON_BIN=$(python3 -c 'import sys; print(sys.executable)')
+OUT=$(HOME="$SETUP_HOME" PATH="$SETUP_BIN" \
+    "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "0d" 2>&1)
 RC=$?
 check_eq "setup rejects a symlinked profile directory" "$RC" "2"
 check "unsafe setup profile directory is explicit" "$OUT" "real directory"
@@ -56,6 +70,75 @@ check_eq "unsafe setup does not write through the symlink" \
     "$(test ! -e "$SETUP_OUTSIDE/pi.json"; echo $?)" "0"
 check_eq "unsafe setup preserves outside bytes" \
     "$(cat "$SETUP_OUTSIDE/sentinel")" "unchanged"
+
+BASE_WARNING='This is a CDM-managed base configuration. `cdm setup` may overwrite this file. Put user policy in `~/.cdm/config.json`.'
+for case in malformed unknown_field wrong_warning out_of_order parent_mode file_mode symlink hard_link fifo; do
+    BASE_HOME="$CONFIG_ROOT/managed-base-$case"
+    BASE_MARKER="$CONFIG_ROOT/managed-base-$case-child-ran"
+    "$PYTHON_BIN" - "$BASE_HOME" "$case" "$BASE_WARNING" <<'PY'
+import json
+import os
+import sys
+
+home, case, warning = sys.argv[1:]
+cdm = os.path.join(home, ".cdm")
+os.makedirs(cdm, mode=0o700)
+os.chmod(cdm, 0o700)
+base = os.path.join(cdm, "base.json")
+document = {"_warning": warning, "import": []}
+if case == "malformed":
+    data = b"{ not json\n"
+elif case == "unknown_field":
+    document["unknown"] = True
+    data = (json.dumps(document) + "\n").encode()
+elif case == "wrong_warning":
+    document["_warning"] = "not managed by CDM"
+    data = (json.dumps(document) + "\n").encode()
+elif case == "out_of_order":
+    document["import"] = ["bundled/codex.json", "bundled/pi.json"]
+    data = (json.dumps(document) + "\n").encode()
+else:
+    data = (json.dumps(document) + "\n").encode()
+
+if case == "symlink":
+    target = os.path.join(home, "base-target.json")
+    with open(target, "wb") as file:
+        file.write(data)
+    os.chmod(target, 0o600)
+    os.symlink(target, base)
+elif case == "fifo":
+    os.mkfifo(base, 0o600)
+else:
+    with open(base, "wb") as file:
+        file.write(data)
+    os.chmod(base, 0o600)
+    if case == "hard_link":
+        os.link(base, os.path.join(home, "base-hard-link.json"))
+    elif case == "file_mode":
+        os.chmod(base, 0o644)
+    elif case == "parent_mode":
+        os.chmod(cdm, 0o755)
+PY
+    OUT=$(HOME="$BASE_HOME" CDM_CONFIG_PATH="$BASE_HOME/.cdm/config.json" \
+        "$CDM" --no-network sh -c \
+        "printf child-ran > '$BASE_MARKER'" 2>&1 >/dev/null)
+    RC=$?
+    case "$case" in
+        malformed) EXPECTED="invalid managed base config" ;;
+        unknown_field) EXPECTED="unknown field" ;;
+        wrong_warning) EXPECTED="unrecognized managed base config" ;;
+        out_of_order) EXPECTED="catalog order" ;;
+        parent_mode) EXPECTED="directory permissions must be 0700" ;;
+        file_mode) EXPECTED="file permissions must be 0600" ;;
+        symlink) EXPECTED="cannot securely open" ;;
+        hard_link) EXPECTED="hard links" ;;
+        fifo) EXPECTED="not a regular file" ;;
+    esac
+    check_eq "managed base $case exits with usage status" "$RC" "2"
+    check "managed base $case explains the failure" "$OUT" "$EXPECTED"
+    check_eq "managed base $case never launches the child" \
+        "$(test ! -e "$BASE_MARKER"; echo $?)" "0"
+done
 
 OUT=$(CDM_CONFIG_PATH="/tmp/cdm-insecure-config-$$.json" "$CDM" --no-network true 2>&1 >/dev/null)
 RC=$?

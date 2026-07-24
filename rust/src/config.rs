@@ -371,10 +371,14 @@ pub struct LoadedConfig {
 const TRUST_STORE_VERSION: u32 = 1;
 const TRUST_STORE_FILE: &str = "trusted-projects.json";
 const BUNDLED_PROFILE_WARNING: &str = "This is a CDM-managed bundled profile. CDM upgrades may overwrite this file. Extend or override it from a profile you own instead of editing it.";
+const SETUP_BASE_WARNING: &str = "This is a CDM-managed base configuration. `cdm setup` may overwrite this file. Put user policy in `~/.cdm/config.json`.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltInProfile {
     pub id: &'static str,
+    pub display_name: &'static str,
+    pub executable: &'static str,
+    pub markers: &'static [&'static str],
     pub allow_ro: &'static [&'static str],
     pub allow_rw: &'static [&'static str],
 }
@@ -382,6 +386,9 @@ pub struct BuiltInProfile {
 const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     BuiltInProfile {
         id: "pi",
+        display_name: "Pi",
+        executable: "pi",
+        markers: &[".pi/agent"],
         allow_ro: &[".pi/agent", ".agents/skills"],
         allow_rw: &[
             ".pi/agent/auth.json",
@@ -396,6 +403,9 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "claude",
+        display_name: "Claude Code",
+        executable: "claude",
+        markers: &[".claude", ".claude.json"],
         allow_ro: &[".claude"],
         allow_rw: &[
             ".claude.json",
@@ -415,6 +425,9 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "codex",
+        display_name: "OpenAI Codex CLI",
+        executable: "codex",
+        markers: &[".codex"],
         allow_ro: &[".codex"],
         allow_rw: &[
             ".codex/.codex-global-state.json",
@@ -431,6 +444,9 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "copilot",
+        display_name: "GitHub Copilot CLI",
+        executable: "copilot",
+        markers: &[".copilot"],
         allow_ro: &[".copilot"],
         allow_rw: &[
             ".cache/copilot",
@@ -596,6 +612,50 @@ fn load_layer(path: &std::path::Path) -> io::Result<Option<ConfigLayer>> {
     read_nofollow(path, false)?
         .map(|bytes| parse_layer(path, &bytes))
         .transpose()
+}
+
+fn load_setup_base_layer(home: &Path) -> io::Result<Option<ConfigLayer>> {
+    let cdm = home.join(".cdm");
+    let path = cdm.join("base.json");
+    #[cfg(unix)]
+    {
+        let parent = match std::fs::symlink_metadata(&cdm) {
+            Ok(parent) => parent,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        if parent.file_type().is_symlink() || !parent.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "managed base parent must be a real directory: {}",
+                    cdm.display()
+                ),
+            ));
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => {
+                validate_existing_setup_directory(&cdm)?;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        }
+    }
+    #[cfg(unix)]
+    let bytes = read_existing_managed_file(&path)?;
+    #[cfg(not(unix))]
+    let bytes = read_nofollow(&path, true)?;
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+    let document = serde_json::from_slice::<SetupBaseDocument>(&bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid managed base config {}: {error}", path.display()),
+        )
+    })?;
+    validate_setup_base_document(&path, &document)?;
+    parse_layer(&path, &bytes).map(Some)
 }
 
 #[cfg(test)]
@@ -872,7 +932,14 @@ fn load_from_paths_internal(
     selected_presets: &[String],
     trust_path: &std::path::Path,
 ) -> io::Result<LoadedConfig> {
-    for path in [global_path, home, trust_path, project.root.as_path()] {
+    let base_path = home.join(".cdm/base.json");
+    for path in [
+        global_path,
+        home,
+        trust_path,
+        project.root.as_path(),
+        base_path.as_path(),
+    ] {
         require_utf8_policy_path(path)?;
     }
     if let Some(path) = project.config_path.as_deref() {
@@ -880,10 +947,23 @@ fn load_from_paths_internal(
     }
     let mut value = CdmConfig::default();
     let mut paths = configured_defaults(&value.paths, home);
+    protect_policy_file(&mut paths, &base_path);
+    protect_policy_parent(&mut paths, &base_path);
     protect_policy_file(&mut paths, global_path);
     protect_policy_parent_if_narrow(&mut paths, global_path, home, &project.root);
     protect_policy_file(&mut paths, trust_path);
     protect_policy_parent(&mut paths, trust_path);
+
+    if let Some(base_layer) = load_setup_base_layer(home)? {
+        for layer in document_layers(base_layer, home, &mut paths)? {
+            let origin = layer
+                .profile_id
+                .as_ref()
+                .map(|id| Origin::Profile(id.clone()))
+                .unwrap_or(Origin::Global);
+            apply_layer(&mut value, &mut paths, layer, home, origin);
+        }
+    }
 
     let global_layer = load_layer(global_path)?.unwrap_or_default();
     let mut presets = BTreeMap::new();
@@ -1292,6 +1372,15 @@ struct BundledProfileDocument<'a> {
     paths: BundledProfilePaths<'a>,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SetupBaseDocument {
+    #[serde(rename = "_warning")]
+    warning: String,
+    #[serde(rename = "import")]
+    imports: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct BundledProfilePaths<'a> {
     allow_ro: &'a [&'static str],
@@ -1374,14 +1463,174 @@ fn atomic_private_write(path: &Path, data: &[u8]) -> io::Result<()> {
     result
 }
 
+fn validate_setup_selection(selected_ids: &[String]) -> io::Result<Vec<&'static BuiltInProfile>> {
+    let mut selected = Vec::with_capacity(selected_ids.len());
+    let mut previous = None;
+    for id in selected_ids {
+        let index = built_in_profiles()
+            .iter()
+            .position(|profile| profile.id == id)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("unknown built-in profile {id:?}"),
+                )
+            })?;
+        if previous.is_some_and(|previous| index <= previous) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "setup profiles must be unique and in catalog order",
+            ));
+        }
+        previous = Some(index);
+        selected.push(&built_in_profiles()[index]);
+    }
+    Ok(selected)
+}
+
+fn validate_setup_base_document(path: &Path, base: &SetupBaseDocument) -> io::Result<()> {
+    if base.warning != SETUP_BASE_WARNING {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "refusing to use unrecognized managed base config: {}",
+                path.display()
+            ),
+        ));
+    }
+    let ids = base
+        .imports
+        .iter()
+        .map(|import| {
+            import
+                .strip_prefix("bundled/")
+                .and_then(|id| id.strip_suffix(".json"))
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid managed base import {import:?}"),
+                    )
+                })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let profiles = validate_setup_selection(&ids)?;
+    let expected = profiles
+        .iter()
+        .map(|profile| format!("bundled/{}.json", profile.id))
+        .collect::<Vec<_>>();
+    if base.imports != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid managed base imports in {}", path.display()),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(unix)]
-pub(crate) fn materialize_bundled_profiles_in(home: &Path) -> io::Result<PathBuf> {
+fn validate_existing_setup_directory(path: &Path) -> io::Result<bool> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "setup directory must be a real directory: {}",
+                path.display()
+            ),
+        ));
+    }
+    if metadata.uid() != unsafe { libc::getuid() } || metadata.permissions().mode() & 0o777 != 0o700
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "setup directory permissions must be 0700: {}",
+                path.display()
+            ),
+        ));
+    }
+    Ok(true)
+}
+
+#[cfg(unix)]
+fn read_existing_managed_file(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let Some(bytes) = read_nofollow(path, true)? else {
+        return Ok(None);
+    };
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.permissions().mode() & 0o777 != 0o600 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("managed file permissions must be 0600: {}", path.display()),
+        ));
+    }
+    Ok(Some(bytes))
+}
+
+#[cfg(unix)]
+fn validate_existing_setup_state(home: &Path) -> io::Result<()> {
+    let cdm = home.join(".cdm");
+    if !validate_existing_setup_directory(&cdm)? {
+        return Ok(());
+    }
+    let base_path = cdm.join("base.json");
+    if let Some(bytes) = read_existing_managed_file(&base_path)? {
+        let base = serde_json::from_slice::<SetupBaseDocument>(&bytes).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "invalid managed base config {}: {error}",
+                    base_path.display()
+                ),
+            )
+        })?;
+        validate_setup_base_document(&base_path, &base)?;
+    }
+
+    let profiles = cdm.join("profiles");
+    if !validate_existing_setup_directory(&profiles)? {
+        return Ok(());
+    }
+    let bundled = profiles.join("bundled");
+    if !validate_existing_setup_directory(&bundled)? {
+        return Ok(());
+    }
+    for profile in built_in_profiles() {
+        let _ = read_existing_managed_file(&bundled.join(format!("{}.json", profile.id)))?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn materialize_setup_selection_in(
+    home: &Path,
+    selected_ids: &[String],
+) -> io::Result<()> {
+    if !home.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "HOME must be an absolute path for bundled profile state",
+        ));
+    }
+    require_utf8_policy_path(home)?;
+    let selected = validate_setup_selection(selected_ids)?;
+    validate_existing_setup_state(home)?;
     ensure_cdm_policy_directory(home)?;
     let profiles = home.join(".cdm/profiles");
     let bundled = profiles.join("bundled");
     ensure_private_directory(&profiles)?;
     ensure_private_directory(&bundled)?;
-    for profile in built_in_profiles() {
+
+    for profile in &selected {
         let document = BundledProfileDocument {
             warning: BUNDLED_PROFILE_WARNING,
             paths: BundledProfilePaths {
@@ -1393,11 +1642,44 @@ pub(crate) fn materialize_bundled_profiles_in(home: &Path) -> io::Result<PathBuf
         data.push(b'\n');
         atomic_private_write(&bundled.join(format!("{}.json", profile.id)), &data)?;
     }
-    Ok(bundled)
+
+    let base = SetupBaseDocument {
+        warning: SETUP_BASE_WARNING.to_owned(),
+        imports: selected
+            .iter()
+            .map(|profile| format!("bundled/{}.json", profile.id))
+            .collect(),
+    };
+    let mut data = serde_json::to_vec_pretty(&base).map_err(io::Error::other)?;
+    data.push(b'\n');
+    atomic_private_write(&home.join(".cdm/base.json"), &data)?;
+
+    for profile in built_in_profiles() {
+        if !selected.iter().any(|selected| selected.id == profile.id) {
+            let path = bundled.join(format!("{}.json", profile.id));
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "cannot remove deselected profile {}: {error}",
+                            path.display()
+                        ),
+                    ))
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(not(unix))]
-pub(crate) fn materialize_bundled_profiles_in(_home: &Path) -> io::Result<PathBuf> {
+pub(crate) fn materialize_setup_selection_in(
+    _home: &Path,
+    _selected_ids: &[String],
+) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "secure bundled profiles require a Unix host",

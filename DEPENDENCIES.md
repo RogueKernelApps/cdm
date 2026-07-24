@@ -6,6 +6,7 @@ Dependencies were reviewed against their latest stable crates.io releases on 16 
 |---|---:|---|
 | `aho-corasick` | 1.1.4 | Bounded overlapping literal matching while streaming macOS bundle references |
 | `clap` / `clap_complete` | 4.6.x | One typed parser generates validation, help, and Bash/Zsh/Fish completion without duplicating the flag contract |
+| `dialoguer` | 0.12.0 | Terminal-native multi-select interaction for the detected-app setup checklist; default features stay disabled |
 | `libc` | 0.2.186 | Current platform constants and bindings |
 | `serde` | 1.0.228 | Current derive and serialization fixes |
 | `serde_json` | 1.0.150 | Current JSON parser/serializer fixes |

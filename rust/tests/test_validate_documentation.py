@@ -55,13 +55,24 @@ class ProfileContractTests(unittest.TestCase):
             ]
         )
         documents = {
-            name: ' '.join(["`import`", "_warning", "~/.cdm/profiles", *validator.PROFILE_IDS])
+            name: ' '.join(
+                [
+                    "`import`",
+                    "_warning",
+                    "~/.cdm/base.json",
+                    "~/.cdm/profiles",
+                    *validator.PROFILE_IDS,
+                ]
+            )
             for name in validator.PROFILE_CONTRACT_DOCUMENTS
         }
         errors: list[str] = []
 
         validator.check_profile_contract(
-            config, "materialize_bundled_profiles_in", documents, errors
+            config,
+            "materialize_setup_selection_in detect_profiles dialoguer IsTerminal",
+            documents,
+            errors,
         )
 
         self.assertEqual(errors, [])
@@ -83,13 +94,24 @@ class ProfileContractTests(unittest.TestCase):
             ]
         )
         documents = {
-            name: ' '.join(["`import`", "_warning", "~/.cdm/profiles", *validator.PROFILE_IDS])
+            name: ' '.join(
+                [
+                    "`import`",
+                    "_warning",
+                    "~/.cdm/base.json",
+                    "~/.cdm/profiles",
+                    *validator.PROFILE_IDS,
+                ]
+            )
             for name in validator.PROFILE_CONTRACT_DOCUMENTS
         }
         errors: list[str] = []
 
         validator.check_profile_contract(
-            config, "dialoguer materialize_bundled_profiles_in", documents, errors
+            config,
+            "materialize_setup_selection_in detect_profiles dialoguer IsTerminal",
+            documents,
+            errors,
         )
 
         self.assertTrue(any("legacy profile contract" in error for error in errors))
