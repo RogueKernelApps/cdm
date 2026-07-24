@@ -194,15 +194,20 @@ PY
     else
         printf "  ${RED}FAIL${NC} config: setup selection did not produce exact profile state\n"; FAIL=$((FAIL + 1))
     fi
-    mkdir -p "$SETUP_PROFILE_HOME/.pi/agent" "$SETUP_PROFILE_HOME/.codex"
-    AUTO_OUTPUT=$(cd "$SETUP_PROFILE_HOME" && env -u CDM_CONFIG_PATH \
-        HOME="$SETUP_PROFILE_HOME" "$CDM" --no-proxy true 2>&1)
+    SETUP_PROFILE_PROJECT=$(mktemp -d "$TEST_TMP/cdm_profile_setup_project.XXXXXX")
+    mkdir -p "$SETUP_PROFILE_HOME/.pi/agent/sessions" "$SETUP_PROFILE_HOME/.codex/sessions"
+    AUTO_OUTPUT=$(cd "$SETUP_PROFILE_PROJECT" && env -u CDM_CONFIG_PATH \
+        HOME="$SETUP_PROFILE_HOME" "$CDM" --no-proxy sh -c \
+        "touch '$SETUP_PROFILE_HOME/.pi/agent/sessions/setup-base' \
+            '$SETUP_PROFILE_HOME/.codex/sessions/setup-base'" 2>&1)
     AUTO_STATUS=$?
-    if [ "$AUTO_STATUS" -eq 0 ] && grep -Fq '[profile:pi]' <<<"$AUTO_OUTPUT" && \
-        grep -Fq '[profile:codex]' <<<"$AUTO_OUTPUT"; then
+    if [ "$AUTO_STATUS" -eq 0 ] && \
+        [ -f "$SETUP_PROFILE_HOME/.pi/agent/sessions/setup-base" ] && \
+        [ -f "$SETUP_PROFILE_HOME/.codex/sessions/setup-base" ]; then
         printf "  ${GREEN}PASS${NC} config: managed base applies selected profiles without CLI flags\n"; PASS=$((PASS + 1))
     else
         printf "  ${RED}FAIL${NC} config: managed base did not apply selected profiles automatically\n"; FAIL=$((FAIL + 1))
+        printf '%s\n' "$AUTO_OUTPUT" >&2
     fi
     printf 'user global bytes\n' > "$SETUP_PROFILE_HOME/.cdm/config.json"
     printf 'personal bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json"
@@ -225,6 +230,7 @@ PY
         printf "  ${RED}FAIL${NC} config: setup rerun damaged or retained the wrong profile state\n"; FAIL=$((FAIL + 1))
     fi
     remove_test_path "$SETUP_PROFILE_HOME"
+    remove_test_path "$SETUP_PROFILE_PROJECT"
 
     PROFILE_ROOT=$(mktemp -d "$TEST_TMP/cdm_profile_test.XXXXXX")
     PROFILE_HOME="$PROFILE_ROOT/home"
