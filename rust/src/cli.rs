@@ -26,7 +26,7 @@ pub enum Action {
     trailing_var_arg = true
 )]
 pub struct RunArgs {
-    /// Apply a profile enabled by `cdm setup` (pi, claude, codex, or copilot). May be repeated.
+    /// Apply a materialized bundled profile (pi, claude, codex, or copilot). May be repeated.
     #[arg(long, value_name = "ID")]
     pub profile: Vec<String>,
     /// Apply a named global configuration preset. May be repeated.
@@ -224,7 +224,7 @@ pub fn write_help(writer: &mut impl io::Write) -> io::Result<()> {
     writeln!(writer, "BUILT-IN COMMANDS:")?;
     writeln!(
         writer,
-        "    setup       Interactively enable detected coding-harness profiles"
+        "    setup       Refresh transparent bundled coding-harness profiles"
     )?;
     writeln!(writer, "                IDs: pi, claude, codex, copilot")?;
     writeln!(

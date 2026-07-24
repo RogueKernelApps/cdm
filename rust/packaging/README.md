@@ -39,8 +39,8 @@ export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.7"
 ./packaging/package.sh release  # runtime and verified corresponding source
 ./packaging/package.sh runtime  # local validation only; do not redistribute alone
 ./packaging/package.sh sources  # incomplete unless CDM_ALPINE_SOURCE_DIR is set
-./packaging/package.sh verify-runtime target/dist/cdm-0.1.4-aarch64-apple-darwin aarch64-apple-darwin
-./packaging/package.sh verify target/dist/cdm-0.1.4-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
+./packaging/package.sh verify-runtime target/dist/cdm-0.1.5-aarch64-apple-darwin aarch64-apple-darwin
+./packaging/package.sh verify target/dist/cdm-0.1.5-aarch64-apple-darwin aarch64-apple-darwin # redistributable completeness
 ```
 
 The output and adjacent `.sha256` files are under `target/dist/`. Downloads and upstream builds are cached under `target/package-work/` and remain ignored by Git.
@@ -322,9 +322,13 @@ token permission read-only. The repository or organization policy must permit th
 job-level grant. GitHub OIDC supplies the short-lived Sigstore identity used by
 `actions/attest`; no long-lived Linux signing key is required.
 
-For a release, update `rust/Cargo.toml` and `rust/Cargo.lock` together, merge that
-change, then create and push the matching tag. For example, version `0.2.0` must be
-tagged `v0.2.0`. The tag workflow performs all builds, signing, verification,
+Post-release development must advance the version before public behavior or its
+documentation is merged. Update `rust/Cargo.toml`, `rust/Cargo.lock`,
+`rust/src/main.rs`, `specs/SPEC.md`, and versioned packaging examples together.
+`tests/validate_documentation.py` rejects a development checkout whose version
+is not newer than the highest release tag. Create and push the matching tag only
+after the release candidate passes; for example, version `0.2.0` must be tagged
+`v0.2.0`. The tag workflow performs all builds, signing, verification,
 attestation, and publication; maintainers do not build or commit release binaries.
 
 ## Install lifecycle
@@ -345,6 +349,11 @@ The bundled installer owns only `bin/cdm`, the runtime libraries it records, and
 `lib/cdm/install-manifest.sha256` under the selected prefix. The manifest records
 the SHA-256 of every owned payload, so verification and removal do not rely on a
 filename glob.
+
+Target-native release acceptance runs `tests/suites/18_builtin_commands.sh`
+against the installed prefix before VM and full-package journeys. A release is
+not complete if any documented built-in is missing, returns the wrong status,
+or falls through to sandbox execution.
 
 ```bash
 ./install.sh install                 # $HOME/.local (also the no-argument default)

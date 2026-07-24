@@ -28,6 +28,20 @@ impl AnchoredRoot {
         })
     }
 
+    pub(crate) fn open_directory(&self, path: &Path) -> io::Result<Self> {
+        let relative = self.relative(path)?;
+        let fd = self.open_directory_optional(relative)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("trusted directory is missing: {}", path.display()),
+            )
+        })?;
+        Ok(Self {
+            root: path.to_path_buf(),
+            fd,
+        })
+    }
+
     pub(crate) fn open_regular(&self, path: &Path) -> io::Result<Option<File>> {
         let relative = self.relative(path)?;
         let (parent, name) = split_relative(relative)?;

@@ -43,33 +43,19 @@ section "Malformed configuration"
 CONFIG_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/cdm-input-config.XXXXXX")
 
 SETUP_HOME="$CONFIG_ROOT/setup-home"
-mkdir -p "$SETUP_HOME/.cdm"
+SETUP_OUTSIDE="$CONFIG_ROOT/setup-outside"
+mkdir -p "$SETUP_HOME/.cdm" "$SETUP_OUTSIDE"
 chmod 700 "$SETUP_HOME/.cdm"
-printf '{"sentinel":true}\n' > "$SETUP_HOME/.cdm/config.json"
-printf '{"version":1,"enabled_profile_ids":["pi"]}\n' \
-    > "$SETUP_HOME/.cdm/setup-profiles.json"
-chmod 600 "$SETUP_HOME/.cdm/setup-profiles.json"
-SETUP_CONFIG_BEFORE=$(cat "$SETUP_HOME/.cdm/config.json")
-SETUP_REGISTRY_BEFORE=$(cat "$SETUP_HOME/.cdm/setup-profiles.json")
+printf 'unchanged\n' > "$SETUP_OUTSIDE/sentinel"
+ln -s "$SETUP_OUTSIDE" "$SETUP_HOME/.cdm/profiles"
 OUT=$(HOME="$SETUP_HOME" "$CDM" setup </dev/null 2>&1 >/dev/null)
 RC=$?
-check_eq "setup rejects non-TTY use" "$RC" "2"
-check "non-TTY setup explains terminal requirement" "$OUT" "interactive terminal"
-check_eq "non-TTY setup preserves global config bytes" \
-    "$(cat "$SETUP_HOME/.cdm/config.json")" "$SETUP_CONFIG_BEFORE"
-check_eq "non-TTY setup preserves registry bytes" \
-    "$(cat "$SETUP_HOME/.cdm/setup-profiles.json")" "$SETUP_REGISTRY_BEFORE"
-
-printf '{"version":2,"enabled_profile_ids":["pi"]}\n' \
-    > "$SETUP_HOME/.cdm/setup-profiles.json"
-MALFORMED_REGISTRY_BEFORE=$(cat "$SETUP_HOME/.cdm/setup-profiles.json")
-OUT=$(HOME="$SETUP_HOME" "$CDM" --no-network true 2>&1 >/dev/null)
-RC=$?
-check_eq "unsupported setup registry version exits with usage status" "$RC" "2"
-check "unsupported setup registry version is explicit" "$OUT" \
-    "unsupported setup profile registry version"
-check_eq "malformed setup registry remains unchanged" \
-    "$(cat "$SETUP_HOME/.cdm/setup-profiles.json")" "$MALFORMED_REGISTRY_BEFORE"
+check_eq "setup rejects a symlinked profile directory" "$RC" "2"
+check "unsafe setup profile directory is explicit" "$OUT" "real directory"
+check_eq "unsafe setup does not write through the symlink" \
+    "$(test ! -e "$SETUP_OUTSIDE/pi.json"; echo $?)" "0"
+check_eq "unsafe setup preserves outside bytes" \
+    "$(cat "$SETUP_OUTSIDE/sentinel")" "unchanged"
 
 OUT=$(CDM_CONFIG_PATH="/tmp/cdm-insecure-config-$$.json" "$CDM" --no-network true 2>&1 >/dev/null)
 RC=$?
@@ -137,5 +123,50 @@ check "non-UTF-8 policy path fails closed" "$OUT" \
     "filesystem policy paths must be valid UTF-8"
 check_eq "non-UTF-8 policy path never launches the child" \
     "$(test ! -e "$NON_UTF8_MARKER"; echo $?)" "0"
+
+IMPORT_HOME="$CONFIG_ROOT/import-home"
+IMPORT_MARKER="$CONFIG_ROOT/import-child-ran"
+mkdir -p "$IMPORT_HOME/.cdm/profiles"
+chmod 700 "$IMPORT_HOME/.cdm" "$IMPORT_HOME/.cdm/profiles"
+
+check_import_failure() {
+    local name="$1" expected="$2"
+    local output status
+    output=$(HOME="$IMPORT_HOME" CDM_CONFIG_PATH="$IMPORT_HOME/.cdm/config.json" \
+        "$CDM" --no-network sh -c \
+        "printf child-ran > '$IMPORT_MARKER'" 2>&1 >/dev/null)
+    status=$?
+    check_eq "$name exits with usage status" "$status" "2"
+    check "$name explains the failure" "$output" "$expected"
+    check_eq "$name never launches the child" \
+        "$(test ! -e "$IMPORT_MARKER"; echo $?)" "0"
+}
+
+printf '{"import":["missing.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "missing profile import" "profile import is missing"
+printf '{ malformed import' > "$IMPORT_HOME/.cdm/profiles/malformed.json"
+printf '{"import":["malformed.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "malformed profile import" "malformed.json"
+printf '{"unknown":true}\n' > "$IMPORT_HOME/.cdm/profiles/unknown.json"
+printf '{"import":["unknown.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "unknown profile import field" "unknown field"
+printf '{"import":["../escape.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "escaping profile import" "contained relative path"
+printf '{"import":["b.json"]}\n' > "$IMPORT_HOME/.cdm/profiles/a.json"
+printf '{"import":["a.json"]}\n' > "$IMPORT_HOME/.cdm/profiles/b.json"
+printf '{"import":["a.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "cyclic profile import" "a.json -> b.json -> a.json"
+printf '{}\n' > "$IMPORT_HOME/.cdm/profiles/link-target.json"
+ln "$IMPORT_HOME/.cdm/profiles/link-target.json" "$IMPORT_HOME/.cdm/profiles/hard-link.json"
+printf '{"import":["hard-link.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "hard-linked profile import" "hard links"
+remove_test_path "$IMPORT_HOME/.cdm/profiles/hard-link.json"
+ln -s "$IMPORT_HOME/.cdm/profiles/link-target.json" "$IMPORT_HOME/.cdm/profiles/symlink.json"
+printf '{"import":["symlink.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "symlinked profile import" "without following symlinks"
+printf '{}\n' > "$IMPORT_HOME/.cdm/profiles/writable.json"
+chmod 666 "$IMPORT_HOME/.cdm/profiles/writable.json"
+printf '{"import":["writable.json"]}\n' > "$IMPORT_HOME/.cdm/config.json"
+check_import_failure "group/world-writable profile import" "group/world writable"
 
 remove_test_path "$CONFIG_ROOT"

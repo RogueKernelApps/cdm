@@ -21,7 +21,9 @@ Keep module interfaces narrow and leave top-level orchestration in `invocation.r
 - Adapters and presentation consume frozen resolved state. They must not canonicalize, reclassify, or independently infer policy paths after resolution.
 - Keep real secret mappings in trusted host memory. Staged files, reports, status, launcher plans, and errors may contain only fake/public data or bounded aggregates.
 - `network.rs` owns valid network/domain states; `secrets.rs`, `stage.rs`, and `proxy.rs` own discovery, obfuscation, scoped restoration, and response re-obfuscation. Proxied mode must never degrade to direct networking.
-- `trusted_exec.rs` is the only place to add host helper resolution and identity pinning. `anchored.rs` owns descriptor-relative no-follow reads below pinned roots.
+- `trusted_exec.rs` is the only place to add host helper resolution and identity pinning. `anchored.rs` owns descriptor-relative no-follow reads below pinned roots; profile `import` entries must use that boundary, reject unsafe ownership/permissions, links, traversal, and cycles, and hard-deny every loaded input and narrow ancestor.
+- `setup.rs` only refreshes the complete bundled catalog. Keep it non-interactive, preserve user-owned/unknown files, and do not reintroduce profile detection, enablement registries, migration, or legacy profile schemas.
+- Preserve `Origin::Profile(ID)` when bundled files are reached through `import`; otherwise optional harness paths become mandatory and status provenance lies.
 - `worktree.rs` owns snapshotting, branch reservation, descriptor-relative finalization, and cleanup without hooks, filters, signing helpers, or project-selected Git executables.
 - `report.rs` is a bounded schema, not a logging channel. `status.rs` renders resolved values and typed origins without exposing argv values.
 

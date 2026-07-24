@@ -12,7 +12,7 @@ USAGE:
     cdm completions <bash|zsh|fish>
 
 BUILT-IN COMMANDS:
-    setup       Interactively enable detected coding-harness profiles
+    setup       Refresh transparent bundled coding-harness profiles
                 IDs: pi, claude, codex, copilot
     config      Create the global configuration if absent
     trust       Approve the nearest project configuration
@@ -27,7 +27,7 @@ Arguments:
 
 Options:
       --profile <ID>
-          Apply a profile enabled by `cdm setup` (pi, claude, codex, or copilot). May be repeated
+          Apply a materialized bundled profile (pi, claude, codex, or copilot). May be repeated
 
       --preset <NAME>
           Apply a named global configuration preset. May be repeated

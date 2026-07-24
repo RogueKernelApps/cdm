@@ -24,3 +24,4 @@ triggers:
 - Preserve deterministic archives, canonical modes, normalized ownership/timestamps, path remapping, and exact first-party license agreement across Cargo metadata, package contents, and SBOM.
 - Installer operations must reject unsafe parents, links, ownership, permissions, and modified owned files; preserve unrelated files and rollback best-effort on interrupted promotion.
 - Before calling an artifact complete, run packaging metadata tests, full package verification, checksum/relocation/linkage inspection, installation tests, and a real packaged VM smoke test.
+- Release acceptance must run `tests/integration.sh 18_builtin_commands` against the installed target-native binary before uninstalling it, and post-release development must advance beyond the previous release version.

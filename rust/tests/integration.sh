@@ -26,6 +26,7 @@
 #   15_process_lifecycle.sh — child status, signals, and cleanup
 #   16_compatibility_matrix.sh — opt-in credential-free real-tool probes
 #   17_structured_reporting.sh — redacted JSON reports and stderr-only stats
+#   18_builtin_commands.sh — built-in dispatch on the exact tested artifact
 
 set -o pipefail
 

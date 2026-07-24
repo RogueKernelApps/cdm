@@ -24,6 +24,11 @@ The installer selects `macos-arm64`, `linux-x86_64`, or `linux-arm64`, verifies
 the runtime with the release's `SHA256SUMS`, and delegates to the package's
 transactional installer. It defaults to `$HOME/.local`:
 
+This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in profiles, and
+the structured status tree require 0.1.5 or newer; 0.1.4 predates those
+features. Run `cdm version` after installation when reading documentation from
+`main`.
+
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 curl --proto '=https' --tlsv1.2 -fsSL \
@@ -31,7 +36,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   | CDM_INSTALL_PREFIX="$HOME/tools" bash
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh \
-  | CDM_INSTALL_VERSION=v0.1.4 bash
+  | CDM_INSTALL_VERSION=v0.1.5 bash
 ```
 
 For a manual installation, download the one `cdm-<version>-<os>-<arch>.tar.gz`
@@ -151,41 +156,20 @@ The startup tree always shows the effective sandbox, file permissions and grants
 
 `--report-json <path>` writes a private JSON report for automation, including early validation and setup failures. Schema version 1 records the selected backend, effective policy when resolution was reached, configured-versus-observed denial coverage, bounded directional proxy/secret counters, child status, and cleanup/worktree outcomes. Policy is `null` when validation or setup fails before resolution. Cleanup is reported as successful only after explicit teardown; an emergency unwind with unfinished teardown reports `incomplete`. It never records argv values, paths, domains, error messages, environment values, or secret material. Prepare the report's parent directory first; CDM refuses symlink destinations and fails if the child swaps the pinned parent directory. `--stats` writes a compact summary to stderr, leaving the wrapped command's stdout byte-for-byte untouched.
 
-## Guided coding-harness profiles
+## Bundled coding-harness profiles
 
-Run `cdm setup` in an interactive terminal to enable built-in access profiles
-for supported coding harnesses. Setup checks `PATH` and known user-state markers
-for Pi, Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI; it never launches
-a detected executable. Only detected tools are shown, all are checked by
-default, the arrow keys move, Space toggles a selection, Enter saves, and Escape
-or `q` cancels without changing prior state. With no detected tools, setup
-reports that nothing changed. Piped/non-TTY use fails with guidance and does not
-write state.
+Run `cdm setup` after installation or upgrade. The command is non-interactive
+and generates readable mode-`0600` policy at
+`~/.cdm/profiles/bundled/pi.json`, `claude.json`, `codex.json`, and
+`copilot.json`. Each valid JSON document has a `_warning` that upgrades may
+overwrite it; compose from files you own under `~/.cdm/profiles/` instead of
+editing bundled files. Setup overwrites only the four known managed files; it
+preserves `~/.cdm/config.json`, user-owned profiles, and unknown bundled files.
+Unsafe profile directories, links, and non-regular managed targets fail closed.
 
-When tools are detected, accepting the checklist replaces the enabled-ID list
-with the current selection. Rerun setup to change the list; clear every box and
-press Enter to disable all detected profiles. A cancelled run and a run with no
-detections leave the existing registry unchanged.
-
-Setup writes a versioned, mode-`0600` registry at
-`~/.cdm/setup-profiles.json` under a real, current-user-owned mode-`0700`
-`~/.cdm` directory:
-
-```json
-{
-  "version": 1,
-  "enabled_profile_ids": ["claude", "pi"]
-}
-```
-
-The registry contains IDs only. Profile policy remains compiled into CDM, and
-setup never creates or rewrites `~/.cdm/config.json`. Malformed JSON, unknown or
-duplicate IDs, unsupported versions, unsafe permissions, symlinks, and hard
-links fail closed. The registry and its parent policy directory are hard
-write-denied to sandboxed children.
-
-Enabling a profile does not activate it automatically. Apply enabled profiles
-explicitly and repeat the flag when policies should compose:
+There is no profile registry or enablement schema. Every known ID is directly
+usable after setup, but CDM still applies profiles only when requested. Repeat
+the flag when policies should compose:
 
 ```bash
 cdm --profile pi pi
@@ -216,9 +200,10 @@ failing the invocation. The initial catalog covers:
 
 `cdm config` creates defaults at `~/.cdm/config.json` and will not overwrite an existing file. When needed, it creates `~/.cdm` with mode `0700`, so `cdm config` and `cdm setup` can be run in either order on a fresh installation. To use `CDM_CONFIG_PATH=/path/policy/config.json`, first create `/path/policy` as a dedicated user-owned directory with no group/world write bits; broad parents such as `/tmp`, `$HOME`, and the project root are rejected. CDM then searches from the original launch directory upward for the nearest `.cdm/config.json`. Review that repository-controlled file and run `cdm trust` from the project: CDM records its exact SHA-256 digest in the mode-0600 `~/.cdm/trusted-projects.json`, and any byte edit requires review and trust again. Symlinked or hard-linked policy files are rejected. `cdm project` reports the root, detected kind, and config path without loading policy or granting access.
 
-The global file may contain a top-level `presets` object. Repeat `--preset <name>` to apply named presets left-to-right. The effective order is built-ins, global file, explicitly selected built-in profiles, selected presets, trusted project file, then CLI flags. Presets are trusted global policy only: project-defined and nested presets are rejected. Partial JSON objects merge with defaults; unknown or disabled profile IDs, unknown preset names, malformed files, and changed/untrusted project files stop execution with exit status 2.
+The global file may contain a top-level `presets` object and an ordered `import` array such as `["personal.json", "work.json"]`. Imports name files beneath `~/.cdm/profiles/`, expand recursively depth-first, merge left-to-right, and apply immediately before the importing file. Nested imports are relative to their profile directory; literal `~/.cdm/profiles/...` names restart from the profile root, and the current file always wins. For example, `work-base.json` can import `my-base.json`, while `my-base.json` imports `bundled/pi.json`, `bundled/claude.json`, and `bundled/codex.json`; a project can then use `"import": ["~/.cdm/profiles/work-base.json"]` and add its own final `paths` settings. The effective order is built-ins, global imports and global file, explicitly selected bundled profiles, selected presets, trusted project imports and project file, then CLI flags. Presets are trusted global policy only: project-defined presets and imports inside presets are rejected. Other absolute/escaping, missing, malformed, unknown-field, symlinked, hard-linked, unsafe-permission, and cyclic imports stop execution before child launch. A selected bundled file that is missing also fails and asks you to rerun `cdm setup`; there is no compiled runtime fallback.
+Bundled imports keep `[profile:ID]` provenance, so missing optional harness state is skipped in the same way whether the bundled file is selected with `--profile` or composed through a user base profile.
 
-The `paths` section supports `allow_ro`, `allow_rw`, `deny_read`, `deny_write`, and `staged_configs`. Path lists are additive and deduplicated; explicit configured denials apply in every mode, while CDM's built-in persistence list is activated only by `--sec`. Global/preset relative paths resolve from `$HOME`, project relative paths resolve from the discovered project root, and CLI grant paths resolve from the effective workspace after `--worktree`. `~` is supported, and explicit grant targets must already exist so mistakes fail closed. The global/trust-store policy directory and the project `.cdm` directory are hard write-denied in the child, preventing file replacement and parent rename/swap attacks even when a broader RW grant exists. Internally discovered app-owned first-launch paths are the deliberate exception to the existence rule: their validated, bundle-ID-derived directories are prepared before policy resolution.
+The `paths` section supports `allow_ro`, `allow_rw`, `deny_read`, `deny_write`, and `staged_configs`. Path lists are additive and deduplicated; explicit configured denials apply in every mode, while CDM's built-in persistence list is activated only by `--sec`. Global, preset, bundled-profile, and user-profile relative paths resolve from `$HOME`. Paths declared directly in trusted project config resolve from the project root even when that file imports a user profile; CLI grants resolve from the effective workspace after `--worktree`. `~` is supported, and explicit grant targets must already exist so mistakes fail closed. Global/trust/profile policy inputs and their narrow directories plus the project `.cdm` directory are hard write-denied in the child, preventing replacement and parent rename/swap attacks even under a broader RW grant. Internally discovered app-owned first-launch paths are the deliberate exception to the existence rule: their validated, bundle-ID-derived directories are prepared before policy resolution.
 
 VM base images are cached under `~/.cdm/rootfs`. Set `CDM_CACHE_DIR` to an absolute path to move that cache, which is useful in CI or restricted host environments. The effective cache must be a real, current-user-owned directory; CDM makes it mode 0700, rejects symlink traversal, and prevents sandboxed children from modifying it. Cached trees carry a deterministic SHA-256 tree digest and are rebuilt if their contents no longer match.
 

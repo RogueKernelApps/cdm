@@ -22,6 +22,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Validate documentation and release/version contracts
+        working-directory: rust
+        run: |
+          python3 -m unittest tests/test_validate_documentation.py
+          python3 tests/validate_documentation.py
       - name: Match release tag to Cargo version
         if: github.event_name == 'push'
         working-directory: rust
@@ -245,6 +252,8 @@ jobs:
           installed="$journey_root/installed prefix with spaces"
           "$relocated/install.sh" install "$installed"
           "$relocated/install.sh" verify "$installed"
+          CDM="$installed/bin/cdm" CDM_SKIP_VM=1 \
+            ./tests/integration.sh 18_builtin_commands
           "$installed/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
           "$relocated/install.sh" uninstall "$installed"
 
@@ -400,6 +409,8 @@ jobs:
           installed="$journey_root/installed prefix with spaces"
           "$relocated/install.sh" install "$installed"
           "$relocated/install.sh" verify "$installed"
+          CDM="$installed/bin/cdm" CDM_SKIP_VM=1 \
+            ./tests/integration.sh 18_builtin_commands
           "$installed/bin/cdm" --no-proxy --vm uname -s | grep -qx Linux
           "$relocated/install.sh" uninstall "$installed"
 

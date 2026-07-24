@@ -17,11 +17,13 @@ This directory tests user-visible behavior through real sandbox adapters. Every 
 ### Patterns & Conventions
 
 - Add a focused regression to the owning numbered suite before fixing a runtime defect. Assert output, host effects, and exit status explicitly.
-- Do not hide failures with unconditional `|| true`. Capture and check expected failures.
+- Do not hide failures with unconditional `|| true`. Capture and check expected failures. Import-validation journeys must also assert that the wrapped child never started.
 - Create disposable fixtures under trusted temporary roots, set repository-local Git identity, and clean every created process, socket, worktree, branch, and file.
 - Cleanup must go through `remove_test_path`; never call PATH-resolved `rm`.
 - Keep assertions portable across supported architectures and public/physical temporary-path aliases.
 - Run `tests/validate_documentation.py` when suite names, environment switches, commands, coverage descriptions, or CLI snapshots change.
+- Keep `18_builtin_commands.sh` synchronized with every documented built-in and suitable for release acceptance against an installed prefix: assert status, representative output, and no sandbox dispatch.
+- Profile coverage must prove non-interactive setup materializes every bundled file, known IDs need no registry, managed refresh preserves user files, and missing/unsafe profile state fails closed. Do not add legacy-registry fixtures.
 
 ### Subdirectories
 

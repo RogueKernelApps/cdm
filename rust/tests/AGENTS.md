@@ -10,6 +10,8 @@ Read the repository-root and `rust/AGENTS.md` instructions first. `README.md` in
 - Keep assertions portable across supported architectures and `/tmp` versus `/private/tmp` aliases.
 - A compiled VM capability is not proof of a runnable macOS VM. Use the signed packaged binary for VM journeys; `CDM_SKIP_VM=1` is an explicit native-only opt-out.
 - Keep the single release-required Alpine registry journey behind `CDM_OCI_SMOKE_TESTS=1`, the broader registry matrix behind `CDM_OCI_TESTS=1`, and authenticated external-harness checks behind `CDM_AI_TESTS=1`. Keep credential-free installed-tool checks behind `CDM_COMPAT_TESTS=1`; real app probes must identify apps by bundle identifier and use a fresh home with networking disabled.
-- Add a focused regression to the owning numbered suite before fixing a runtime defect. Keep cross-adapter contract tests in `07_cross_mode.sh` and adapter-specific behavior in its owning suite.
+- Add a focused regression to the owning numbered suite before fixing a runtime defect. Configuration journeys must prove imported policy ordering/path anchoring and that malformed or unsafe graphs fail before child execution. Keep cross-adapter contract tests in `07_cross_mode.sh` and adapter-specific behavior in its owning suite.
+- Base-profile journeys that import `bundled/*.json` must prove profile provenance and missing optional harness state are preserved through the import graph.
+- Keep `18_builtin_commands.sh` as the complete lightweight inventory of documented built-ins. Assert exit status, representative output, and absence of sandbox dispatch so target-native release acceptance can run it against both packaged and installed artifacts.
 
 Run `python3 tests/validate_documentation.py` when suite names, environment switches, commands, or coverage descriptions change.

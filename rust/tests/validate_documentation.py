@@ -54,6 +54,9 @@ PUBLIC_FLAGS = (
     "--stats",
 )
 
+PROFILE_IDS = ("pi", "claude", "codex", "copilot")
+PROFILE_CONTRACT_DOCUMENTS = ("README.md", "GETTING_STARTED.md", "specs/SPEC.md")
+
 CURRENT_DOCS = (
     ROOT / "AGENTS.md",
     ROOT / "README.md",
@@ -94,6 +97,106 @@ def check_links(path: Path, errors: list[str]) -> None:
             errors.append(f"{path.relative_to(ROOT)}: broken relative link {target}")
 
 
+def check_development_version(cargo_version: str, errors: list[str]) -> None:
+    """Require development to advance beyond the highest release tag."""
+    listed = subprocess.run(
+        ["git", "tag", "--list", "v[0-9]*"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return
+    release_tags: list[tuple[tuple[int, int, int, int], str]] = []
+    for tag in listed.stdout.splitlines():
+        parsed = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)([-+].*)?", tag)
+        if parsed is None:
+            continue
+        major, minor, patch = (int(part) for part in parsed.groups()[:3])
+        stable = int(parsed.group(4) is None or parsed.group(4).startswith("+"))
+        release_tags.append(((major, minor, patch, stable), tag))
+    if not release_tags:
+        return
+    _, release_tag = max(release_tags)
+    release_version = release_tag.removeprefix("v")
+    exact = subprocess.run(
+        ["git", "describe", "--tags", "--exact-match", "--match", "v[0-9]*"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if exact.returncode == 0 and exact.stdout.strip() == release_tag:
+        if cargo_version == release_version:
+            return
+        errors.append(
+            f"exact release tag {release_tag} does not match Cargo version {cargo_version}"
+        )
+        return
+    cargo_core = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", cargo_version)
+    release_core = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", release_version)
+    if cargo_core is None or release_core is None:
+        errors.append(
+            f"cannot compare development version {cargo_version} with {release_tag}"
+        )
+        return
+    cargo_order = tuple(int(part) for part in cargo_core.groups())
+    release_order = tuple(int(part) for part in release_core.groups())
+    if cargo_order <= release_order:
+        errors.append(
+            f"development version {cargo_version} is not newer than released {release_tag}; "
+            "advance Cargo, source, lockfile, specification, and packaging examples "
+            "before documenting or merging post-release behavior"
+        )
+
+
+def check_profile_contract(
+    config_source: str,
+    setup_source: str,
+    documents: dict[str, str],
+    errors: list[str],
+) -> None:
+    """Keep the materialized catalog and import syntax visible in current docs."""
+    for marker, description in (
+        ('#[serde(rename = "import")]', "singular JSON import key"),
+        ("BUNDLED_PROFILE_WARNING", "bundled profile warning"),
+    ):
+        if marker not in config_source:
+            errors.append(f"rust/src/config.rs missing {description}")
+    source_ids = set(re.findall(r'\bid:\s*"([^"]+)"', config_source))
+    if source_ids != set(PROFILE_IDS):
+        errors.append(
+            "built-in profile catalog mismatch: "
+            f"expected {', '.join(PROFILE_IDS)}, found {', '.join(sorted(source_ids))}"
+        )
+    if "materialize_bundled_profiles_in" not in setup_source:
+        errors.append("rust/src/setup.rs does not materialize bundled profiles")
+    for marker in (
+        "setup-profiles.json",
+        "enabled_profile_ids",
+        "SetupProfilesRegistry",
+        "read_setup_profiles",
+        "write_setup_profiles",
+        "detect_profiles",
+        "dialoguer",
+        "IsTerminal",
+    ):
+        if marker in config_source or marker in setup_source:
+            errors.append(f"legacy profile contract remains in source: {marker}")
+    for name in PROFILE_CONTRACT_DOCUMENTS:
+        text = documents.get(name)
+        if text is None:
+            errors.append(f"missing profile contract document: {name}")
+            continue
+        for marker in ("`import`", "_warning", "~/.cdm/profiles", *PROFILE_IDS):
+            if marker not in text:
+                errors.append(f"{name}: missing profile contract marker {marker}")
+        for marker in ("setup-profiles.json", "enabled_profile_ids"):
+            if marker in text:
+                errors.append(f"legacy profile contract remains in {name}: {marker}")
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -122,11 +225,24 @@ def main() -> int:
                 "version mismatch: "
                 f"Cargo={cargo_version}, source={source_version}, spec={spec_version}"
             )
+        else:
+            check_development_version(cargo_version, errors)
     except (OSError, ValueError) as error:
         errors.append(str(error))
 
     cli_source = (RUST / "src/cli.rs").read_text(encoding="utf-8")
+    config_source = (RUST / "src/config.rs").read_text(encoding="utf-8")
+    setup_source = (RUST / "src/setup.rs").read_text(encoding="utf-8")
     specification = (ROOT / "specs/SPEC.md").read_text(encoding="utf-8")
+    check_profile_contract(
+        config_source,
+        setup_source,
+        {
+            name: (ROOT / name).read_text(encoding="utf-8")
+            for name in PROFILE_CONTRACT_DOCUMENTS
+        },
+        errors,
+    )
     for flag in PUBLIC_FLAGS:
         field = flag.removeprefix("--").replace("-", "_")
         if not re.search(rf"^\s*pub\s+{re.escape(field)}\s*:", cli_source, re.MULTILINE):
@@ -190,9 +306,11 @@ def main() -> int:
 
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     for marker, description in (
+        ("fetch-depth: 0", "full release-tag history for version validation"),
         ("toolchain: 1.88.0", "MSRV 1.88 job"),
         ("--all-targets --features vm", "automatic VM feature gate"),
         ("cargo-audit --version", "pinned cargo-audit install"),
+        ("tests/test_validate_documentation.py", "release-version validator tests"),
     ):
         if marker not in ci:
             errors.append(f"CI contract missing {description}")
@@ -208,6 +326,8 @@ def main() -> int:
         '"$relocated/bin/cdm" --no-proxy --vm',
         '"$relocated/install.sh" install',
         '"$installed/bin/cdm" --no-proxy --vm',
+        'CDM="$installed/bin/cdm" CDM_SKIP_VM=1',
+        "./tests/integration.sh 18_builtin_commands",
         "./tests/integration.sh",
     )
     for marker in acceptance_markers:
@@ -215,6 +335,17 @@ def main() -> int:
             errors.append(
                 f"production release workflow missing exact-package acceptance marker: {marker}"
             )
+    if release_workflow.count('CDM="$installed/bin/cdm" CDM_SKIP_VM=1') != 2:
+        errors.append(
+            "production release workflow must run built-in acceptance against "
+            "both installed target-native paths"
+        )
+    if "python3 tests/validate_documentation.py" not in release_workflow:
+        errors.append("production release preflight omits documentation/version validation")
+    if "tests/test_validate_documentation.py" not in release_workflow:
+        errors.append("production release preflight omits release-version validator tests")
+    if "fetch-depth: 0" not in release_workflow:
+        errors.append("production release preflight omits release-tag history")
     if release_workflow.find("./tests/integration.sh") > release_workflow.find(
         "Upload exact release outputs"
     ):

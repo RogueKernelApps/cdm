@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::origin::Origin;
@@ -370,15 +370,11 @@ pub struct LoadedConfig {
 
 const TRUST_STORE_VERSION: u32 = 1;
 const TRUST_STORE_FILE: &str = "trusted-projects.json";
-const SETUP_PROFILES_VERSION: u32 = 1;
-const SETUP_PROFILES_FILE: &str = "setup-profiles.json";
+const BUNDLED_PROFILE_WARNING: &str = "This is a CDM-managed bundled profile. CDM upgrades may overwrite this file. Extend or override it from a profile you own instead of editing it.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuiltInProfile {
     pub id: &'static str,
-    pub display_name: &'static str,
-    pub executable: &'static str,
-    pub markers: &'static [&'static str],
     pub allow_ro: &'static [&'static str],
     pub allow_rw: &'static [&'static str],
 }
@@ -386,9 +382,6 @@ pub struct BuiltInProfile {
 const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     BuiltInProfile {
         id: "pi",
-        display_name: "Pi",
-        executable: "pi",
-        markers: &[".pi/agent"],
         allow_ro: &[".pi/agent", ".agents/skills"],
         allow_rw: &[
             ".pi/agent/auth.json",
@@ -403,9 +396,6 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "claude",
-        display_name: "Claude Code",
-        executable: "claude",
-        markers: &[".claude", ".claude.json"],
         allow_ro: &[".claude"],
         allow_rw: &[
             ".claude.json",
@@ -425,9 +415,6 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "codex",
-        display_name: "OpenAI Codex CLI",
-        executable: "codex",
-        markers: &[".codex"],
         allow_ro: &[".codex"],
         allow_rw: &[
             ".codex/.codex-global-state.json",
@@ -444,9 +431,6 @@ const BUILT_IN_PROFILES: &[BuiltInProfile] = &[
     },
     BuiltInProfile {
         id: "copilot",
-        display_name: "GitHub Copilot CLI",
-        executable: "copilot",
-        markers: &[".copilot"],
         allow_ro: &[".copilot"],
         allow_rw: &[
             ".cache/copilot",
@@ -473,39 +457,15 @@ pub fn built_in_profiles() -> &'static [BuiltInProfile] {
     BUILT_IN_PROFILES
 }
 
-fn profile_layer(profile: &BuiltInProfile) -> ConfigLayer {
-    ConfigLayer {
-        paths: Some(PathsLayer {
-            allow_ro: Some(
-                profile
-                    .allow_ro
-                    .iter()
-                    .map(|path| (*path).to_string())
-                    .collect(),
-            ),
-            allow_rw: Some(
-                profile
-                    .allow_rw
-                    .iter()
-                    .map(|path| (*path).to_string())
-                    .collect(),
-            ),
-            ..PathsLayer::default()
-        }),
-        ..ConfigLayer::default()
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct SetupProfilesRegistry {
-    version: u32,
-    enabled_profile_ids: Vec<String>,
-}
-
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct ConfigLayer {
+    #[serde(rename = "_warning")]
+    warning: Option<String>,
+    #[serde(rename = "import")]
+    imports: Vec<String>,
+    #[serde(skip)]
+    profile_id: Option<String>,
     env: Option<EnvLayer>,
     paths: Option<PathsLayer>,
     secrets: Option<SecretsLayer>,
@@ -629,7 +589,6 @@ pub fn load_with_profiles(
         selected_profiles,
         selected_presets,
         &trust_path,
-        &setup_profiles_path(&home),
     )
 }
 
@@ -654,7 +613,6 @@ fn load_from_paths(
         &[],
         selected_presets,
         trust_path,
-        None,
     )
 }
 
@@ -665,7 +623,6 @@ fn load_from_paths_with_profiles(
     selected_profiles: &[String],
     selected_presets: &[String],
     trust_path: &std::path::Path,
-    profile_registry_path: &std::path::Path,
 ) -> io::Result<LoadedConfig> {
     load_from_paths_internal(
         global_path,
@@ -674,8 +631,237 @@ fn load_from_paths_with_profiles(
         selected_profiles,
         selected_presets,
         trust_path,
-        Some(profile_registry_path),
     )
+}
+
+#[cfg(unix)]
+fn profile_layers(
+    home: &Path,
+    imports: Vec<String>,
+    paths: &mut ConfiguredPaths,
+) -> io::Result<Vec<ConfigLayer>> {
+    use crate::anchored::AnchoredRoot;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    if imports.is_empty() {
+        return Ok(Vec::new());
+    }
+    let root_path = home.join(".cdm/profiles");
+    for directory in [home.join(".cdm"), root_path.clone()] {
+        let metadata = std::fs::symlink_metadata(&directory).map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "profile directory is missing: {}; run `cdm setup`",
+                        directory.display()
+                    ),
+                )
+            } else {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot inspect profile directory {}: {error}",
+                        directory.display()
+                    ),
+                )
+            }
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "profile directory must be a real directory: {}",
+                    directory.display()
+                ),
+            ));
+        }
+        if metadata.uid() != unsafe { libc::getuid() } || metadata.permissions().mode() & 0o022 != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "profile directory must be user-owned and not group/world writable: {}",
+                    directory.display()
+                ),
+            ));
+        }
+    }
+    let home_root = AnchoredRoot::open(home)?;
+    let cdm_root = home_root.open_directory(&home.join(".cdm"))?;
+    let root = cdm_root.open_directory(&root_path)?;
+    let mut layers = Vec::new();
+    let mut active = Vec::new();
+    for import in imports {
+        expand_profile_import(
+            &root,
+            &root_path,
+            Path::new(""),
+            &import,
+            &mut active,
+            &mut layers,
+            paths,
+        )?;
+    }
+    Ok(layers)
+}
+
+#[cfg(unix)]
+fn expand_profile_import(
+    root: &crate::anchored::AnchoredRoot,
+    root_path: &Path,
+    importing_directory: &Path,
+    import: &str,
+    active: &mut Vec<PathBuf>,
+    layers: &mut Vec<ConfigLayer>,
+    protected_paths: &mut ConfiguredPaths,
+) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let (importing_directory, requested) = match import.strip_prefix("~/.cdm/profiles/") {
+        Some(relative) => (Path::new(""), Path::new(relative)),
+        None => (importing_directory, Path::new(import)),
+    };
+    if requested.is_absolute()
+        || requested
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("profile import must be a contained relative path: {import:?}"),
+        ));
+    }
+    let relative = importing_directory.join(requested);
+    if let Some(position) = active.iter().position(|path| path == &relative) {
+        let chain = active[position..]
+            .iter()
+            .chain(std::iter::once(&relative))
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" -> ");
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("profile import cycle: {chain}"),
+        ));
+    }
+    let path = root_path.join(&relative);
+    let mut ancestor = root_path.to_path_buf();
+    protect_policy_file(protected_paths, &ancestor);
+    for component in relative.parent().unwrap_or(Path::new("")).components() {
+        ancestor.push(component.as_os_str());
+        let metadata = std::fs::symlink_metadata(&ancestor).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "cannot inspect profile directory {}: {error}",
+                    ancestor.display()
+                ),
+            )
+        })?;
+        if metadata.file_type().is_symlink()
+            || !metadata.is_dir()
+            || metadata.uid() != unsafe { libc::getuid() }
+            || metadata.permissions().mode() & 0o022 != 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "profile import has an unsafe directory: {}",
+                    ancestor.display()
+                ),
+            ));
+        }
+        protect_policy_file(protected_paths, &ancestor);
+    }
+    let mut file = root.open_regular(&path)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "profile import is missing: {}; run `cdm setup` if it is bundled",
+                path.display()
+            ),
+        )
+    })?;
+    let metadata = file.metadata()?;
+    if metadata.nlink() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("profile file must not have hard links: {}", path.display()),
+        ));
+    }
+    if metadata.uid() != unsafe { libc::getuid() } {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "profile file is not owned by the current user: {}",
+                path.display()
+            ),
+        ));
+    }
+    if metadata.permissions().mode() & 0o022 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "profile file must not be group/world writable: {}",
+                path.display()
+            ),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let mut layer = parse_layer(&path, &bytes)?;
+    if relative.parent() == Some(Path::new("bundled")) {
+        if let Some(id) = relative.file_stem().and_then(|stem| stem.to_str()) {
+            if built_in_profiles().iter().any(|profile| profile.id == id) {
+                layer.profile_id = Some(id.to_owned());
+            }
+        }
+    }
+    protect_policy_file(protected_paths, &path);
+    protect_policy_parent(protected_paths, &path);
+    active.push(relative.clone());
+    let directory = relative.parent().unwrap_or(Path::new(""));
+    for nested in std::mem::take(&mut layer.imports) {
+        expand_profile_import(
+            root,
+            root_path,
+            directory,
+            &nested,
+            active,
+            layers,
+            protected_paths,
+        )?;
+    }
+    active.pop();
+    layers.push(layer);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn profile_layers(
+    _home: &Path,
+    imports: Vec<String>,
+    _paths: &mut ConfiguredPaths,
+) -> io::Result<Vec<ConfigLayer>> {
+    if imports.is_empty() {
+        Ok(Vec::new())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "secure profile imports require a Unix host",
+        ))
+    }
+}
+
+fn document_layers(
+    mut current: ConfigLayer,
+    home: &Path,
+    paths: &mut ConfiguredPaths,
+) -> io::Result<Vec<ConfigLayer>> {
+    let mut layers = profile_layers(home, std::mem::take(&mut current.imports), paths)?;
+    layers.push(current);
+    Ok(layers)
 }
 
 fn load_from_paths_internal(
@@ -685,7 +871,6 @@ fn load_from_paths_internal(
     selected_profiles: &[String],
     selected_presets: &[String],
     trust_path: &std::path::Path,
-    profile_registry_path: Option<&std::path::Path>,
 ) -> io::Result<LoadedConfig> {
     for path in [global_path, home, trust_path, project.root.as_path()] {
         require_utf8_policy_path(path)?;
@@ -699,45 +884,36 @@ fn load_from_paths_internal(
     protect_policy_parent_if_narrow(&mut paths, global_path, home, &project.root);
     protect_policy_file(&mut paths, trust_path);
     protect_policy_parent(&mut paths, trust_path);
-    let enabled_profiles = if let Some(path) = profile_registry_path {
-        require_utf8_policy_path(path)?;
-        protect_policy_file(&mut paths, path);
-        protect_policy_parent(&mut paths, path);
-        read_setup_profiles_from(path, home)?
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-    } else {
-        BTreeSet::new()
-    };
 
-    let mut global_layer = load_layer(global_path)?.unwrap_or_default();
-    let presets = std::mem::take(&mut global_layer.presets);
-    apply_layer(&mut value, &mut paths, global_layer, home, Origin::Global);
+    let global_layer = load_layer(global_path)?.unwrap_or_default();
+    let mut presets = BTreeMap::new();
+    for mut layer in document_layers(global_layer, home, &mut paths)? {
+        presets.extend(std::mem::take(&mut layer.presets));
+        let origin = layer
+            .profile_id
+            .as_ref()
+            .map(|id| Origin::Profile(id.clone()))
+            .unwrap_or(Origin::Global);
+        apply_layer(&mut value, &mut paths, layer, home, origin);
+    }
     let mut applied_profiles = BTreeSet::new();
     for id in selected_profiles {
-        let profile = built_in_profiles()
-            .iter()
-            .find(|profile| profile.id == id)
-            .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("unknown built-in profile {id:?}"),
-                )
-            })?;
-        if !enabled_profiles.contains(id) {
+        if !built_in_profiles().iter().any(|profile| profile.id == id) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("profile {id:?} is not enabled; run `cdm setup`"),
+                format!("unknown built-in profile {id:?}"),
             ));
         }
         if applied_profiles.insert(id.clone()) {
-            apply_layer(
-                &mut value,
-                &mut paths,
-                profile_layer(profile),
-                home,
-                Origin::Profile(id.clone()),
-            );
+            for layer in profile_layers(home, vec![format!("bundled/{id}.json")], &mut paths)? {
+                apply_layer(
+                    &mut value,
+                    &mut paths,
+                    layer,
+                    home,
+                    Origin::Profile(id.clone()),
+                );
+            }
         }
     }
     for name in selected_presets {
@@ -747,10 +923,10 @@ fn load_from_paths_internal(
                 format!("unknown preset {name:?} in {}", global_path.display()),
             )
         })?;
-        if !preset.presets.is_empty() {
+        if !preset.presets.is_empty() || !preset.imports.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("preset {name:?} must not contain nested presets"),
+                format!("preset {name:?} must not contain imports or nested presets"),
             ));
         }
         apply_layer(
@@ -766,16 +942,28 @@ fn load_from_paths_internal(
         protect_policy_parent(&mut paths, project_path);
         if project_path != global_path {
             let layer = load_trusted_project_layer(project_path, trust_path)?;
-            if !layer.presets.is_empty() {
+            let mut layers = document_layers(layer, home, &mut paths)?;
+            if layers.iter().any(|layer| !layer.presets.is_empty()) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "presets may be declared only in the global config",
                 ));
             }
+            let current = layers
+                .pop()
+                .expect("document layers include the current file");
+            for imported in layers {
+                let origin = imported
+                    .profile_id
+                    .as_ref()
+                    .map(|id| Origin::Profile(id.clone()))
+                    .unwrap_or(Origin::Project);
+                apply_layer(&mut value, &mut paths, imported, home, origin);
+            }
             apply_layer(
                 &mut value,
                 &mut paths,
-                layer,
+                current,
                 &project.root,
                 Origin::Project,
             );
@@ -870,10 +1058,6 @@ fn parse_layer(path: &std::path::Path, bytes: &[u8]) -> io::Result<ConfigLayer> 
 
 fn trust_store_path(home: &std::path::Path) -> PathBuf {
     home.join(".cdm").join(TRUST_STORE_FILE)
-}
-
-pub(crate) fn setup_profiles_path(home: &std::path::Path) -> PathBuf {
-    home.join(".cdm").join(SETUP_PROFILES_FILE)
 }
 
 fn absolute_path(path: &std::path::Path) -> io::Result<PathBuf> {
@@ -1042,70 +1226,20 @@ fn read_trust_store(path: &std::path::Path) -> io::Result<TrustStore> {
     Ok(store)
 }
 
-pub(crate) fn read_setup_profiles_in(home: &std::path::Path) -> io::Result<Vec<String>> {
-    read_setup_profiles_from(&setup_profiles_path(home), home)
-}
-
-fn read_setup_profiles_from(
-    path: &std::path::Path,
-    home: &std::path::Path,
-) -> io::Result<Vec<String>> {
-    let Some(bytes) = read_nofollow(path, true)? else {
-        return Ok(Vec::new());
-    };
-    validate_setup_profiles_parent(home, false)?;
-    let registry = serde_json::from_slice::<SetupProfilesRegistry>(&bytes).map_err(|error| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("invalid setup profile registry {}: {error}", path.display()),
-        )
-    })?;
-    if registry.version != SETUP_PROFILES_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!(
-                "unsupported setup profile registry version {}",
-                registry.version
-            ),
-        ));
-    }
-    let known = built_in_profiles()
-        .iter()
-        .map(|profile| profile.id)
-        .collect::<BTreeSet<_>>();
-    let mut seen = BTreeSet::new();
-    for id in &registry.enabled_profile_ids {
-        if !known.contains(id.as_str()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown enabled built-in profile {id:?}"),
-            ));
-        }
-        if !seen.insert(id.as_str()) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("duplicate enabled built-in profile {id:?}"),
-            ));
-        }
-    }
-    Ok(registry.enabled_profile_ids)
-}
-
 #[cfg(unix)]
-fn validate_setup_profiles_parent(home: &std::path::Path, create: bool) -> io::Result<()> {
+fn ensure_cdm_policy_directory(home: &std::path::Path) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 
     if !home.is_absolute() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "HOME must be an absolute path for setup profile state",
+            "HOME must be an absolute path for bundled profile state",
         ));
     }
     require_utf8_policy_path(home)?;
     let parent = home.join(".cdm");
     let metadata = match std::fs::symlink_metadata(&parent) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound && !create => return Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let mut builder = std::fs::DirBuilder::new();
             builder.mode(0o700).create(&parent)?;
@@ -1117,7 +1251,7 @@ fn validate_setup_profiles_parent(home: &std::path::Path, create: bool) -> io::R
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!(
-                "setup profile registry directory must be a real directory: {}",
+                "CDM policy directory must be a real directory: {}",
                 parent.display()
             ),
         ));
@@ -1126,7 +1260,7 @@ fn validate_setup_profiles_parent(home: &std::path::Path, create: bool) -> io::R
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!(
-                "setup profile registry directory is not owned by the current user: {}",
+                "CDM policy directory is not owned by the current user: {}",
                 parent.display()
             ),
         ));
@@ -1135,7 +1269,7 @@ fn validate_setup_profiles_parent(home: &std::path::Path, create: bool) -> io::R
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!(
-                "setup profile registry directory permissions must be 0700: {}",
+                "CDM policy directory permissions must be 0700: {}",
                 parent.display()
             ),
         ));
@@ -1144,81 +1278,129 @@ fn validate_setup_profiles_parent(home: &std::path::Path, create: bool) -> io::R
 }
 
 #[cfg(not(unix))]
-fn validate_setup_profiles_parent(_home: &std::path::Path, _create: bool) -> io::Result<()> {
+fn ensure_cdm_policy_directory(_home: &std::path::Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "secure setup profile state requires a Unix host",
+        "secure bundled profiles require a Unix host",
     ))
 }
 
-#[cfg(unix)]
-pub(crate) fn write_setup_profiles_in(
-    home: &std::path::Path,
-    ids: &[String],
-) -> io::Result<PathBuf> {
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+#[derive(Serialize)]
+struct BundledProfileDocument<'a> {
+    #[serde(rename = "_warning")]
+    warning: &'static str,
+    paths: BundledProfilePaths<'a>,
+}
 
-    let known = built_in_profiles()
-        .iter()
-        .map(|profile| profile.id)
-        .collect::<BTreeSet<_>>();
-    let enabled_profile_ids = ids.iter().cloned().collect::<BTreeSet<_>>();
-    if let Some(id) = enabled_profile_ids
-        .iter()
-        .find(|id| !known.contains(id.as_str()))
-    {
+#[derive(Serialize)]
+struct BundledProfilePaths<'a> {
+    allow_ro: &'a [&'static str],
+    allow_rw: &'a [&'static str],
+}
+
+#[cfg(unix)]
+fn ensure_private_directory(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut builder = std::fs::DirBuilder::new();
+            builder.mode(0o700).create(path)?;
+            std::fs::symlink_metadata(path)?
+        }
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("unknown built-in profile {id:?}"),
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "profile directory must be a real directory: {}",
+                path.display()
+            ),
         ));
     }
-    validate_setup_profiles_parent(home, true)?;
-    let path = setup_profiles_path(home);
-    let _ = read_setup_profiles_from(&path, home)?;
-    let registry = SetupProfilesRegistry {
-        version: SETUP_PROFILES_VERSION,
-        enabled_profile_ids: enabled_profile_ids.iter().cloned().collect(),
-    };
-    let mut data = serde_json::to_vec_pretty(&registry).map_err(io::Error::other)?;
-    data.push(b'\n');
-    if read_nofollow(&path, true)?.as_deref() == Some(data.as_slice()) {
-        return Ok(path);
+    if metadata.uid() != unsafe { libc::getuid() } || metadata.permissions().mode() & 0o777 != 0o700
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "profile directory permissions must be 0700: {}",
+                path.display()
+            ),
+        ));
     }
+    Ok(())
+}
 
+#[cfg(unix)]
+fn atomic_private_write(path: &Path, data: &[u8]) -> io::Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {
+            let _ = read_nofollow(path, false)?;
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
     let parent = path
         .parent()
-        .ok_or_else(|| io::Error::other("setup profile registry has no parent"))?;
+        .ok_or_else(|| io::Error::other("managed profile has no parent"))?;
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let temp = parent.join(format!(
-        ".{SETUP_PROFILES_FILE}.{}.{nonce}.tmp",
-        std::process::id()
-    ));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("profile.json");
+    let temp = parent.join(format!(".{name}.{}.{nonce}.tmp", std::process::id()));
     let result = (|| {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .mode(0o600)
             .open(&temp)?;
-        file.write_all(&data)?;
+        file.write_all(data)?;
         file.sync_all()?;
         std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o600))?;
-        std::fs::rename(&temp, &path)?;
+        std::fs::rename(&temp, path)?;
         Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&temp);
     }
-    result.map(|()| path)
+    result
+}
+
+#[cfg(unix)]
+pub(crate) fn materialize_bundled_profiles_in(home: &Path) -> io::Result<PathBuf> {
+    ensure_cdm_policy_directory(home)?;
+    let profiles = home.join(".cdm/profiles");
+    let bundled = profiles.join("bundled");
+    ensure_private_directory(&profiles)?;
+    ensure_private_directory(&bundled)?;
+    for profile in built_in_profiles() {
+        let document = BundledProfileDocument {
+            warning: BUNDLED_PROFILE_WARNING,
+            paths: BundledProfilePaths {
+                allow_ro: profile.allow_ro,
+                allow_rw: profile.allow_rw,
+            },
+        };
+        let mut data = serde_json::to_vec_pretty(&document).map_err(io::Error::other)?;
+        data.push(b'\n');
+        atomic_private_write(&bundled.join(format!("{}.json", profile.id)), &data)?;
+    }
+    Ok(bundled)
 }
 
 #[cfg(not(unix))]
-fn write_setup_profiles_in(_home: &std::path::Path, _ids: &[String]) -> io::Result<PathBuf> {
+pub(crate) fn materialize_bundled_profiles_in(_home: &Path) -> io::Result<PathBuf> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
-        "secure setup profile state requires a Unix host",
+        "secure bundled profiles require a Unix host",
     ))
 }
 
@@ -1229,7 +1411,7 @@ fn read_nofollow(path: &std::path::Path, require_private: bool) -> io::Result<Op
     let mut options = OpenOptions::new();
     options
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK);
     let mut file = match options.open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),

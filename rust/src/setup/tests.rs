@@ -1,4 +1,4 @@
-//! Unit tests for guided setup detection and registry orchestration.
+//! Unit tests for bundled-profile setup orchestration.
 
 use super::*;
 
@@ -8,148 +8,67 @@ fn test_home(name: &str) -> PathBuf {
 
 #[cfg(unix)]
 #[test]
-fn detection_is_catalog_ordered_and_never_executes_tools() {
+fn setup_refreshes_the_complete_catalog_and_preserves_unmanaged_files() {
     use std::os::unix::fs::PermissionsExt;
 
-    let temp = test_home("detect");
+    let temp = test_home("refresh");
     let home = temp.join("home");
-    let bin = temp.join("bin");
-    let sentinel = temp.join("executed");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
-    for executable in ["copilot", "claude"] {
-        let path = bin.join(executable);
-        std::fs::write(&path, format!("#!/bin/sh\ntouch {:?}\n", sentinel)).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let profiles = home.join(".cdm/profiles");
+    let bundled = profiles.join("bundled");
+    std::fs::create_dir_all(&bundled).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone(), bundled.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-
-    let detected = detect_profiles(&home, bin.as_os_str());
-
-    assert_eq!(
-        detected
-            .iter()
-            .map(|profile| profile.id)
-            .collect::<Vec<_>>(),
-        ["pi", "claude", "copilot"]
-    );
-    assert!(!sentinel.exists());
-    let _ = std::fs::remove_dir_all(temp);
-}
-
-#[cfg(unix)]
-#[test]
-fn selected_detected_profiles_are_persisted_with_all_defaults_checked() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = test_home("selection");
-    let home = temp.join("home");
-    let bin = temp.join("bin");
-    std::fs::create_dir_all(home.join(".cdm")).unwrap();
-    std::fs::set_permissions(home.join(".cdm"), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let global_config = home.join(".cdm/config.json");
-    std::fs::write(&global_config, b"keep global config bytes\n").unwrap();
-    std::fs::create_dir_all(&bin).unwrap();
-    for executable in ["pi", "claude", "codex"] {
-        let path = bin.join(executable);
-        std::fs::write(&path, "#!/bin/sh\nexit 99\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    let global = home.join(".cdm/config.json");
+    let personal = profiles.join("personal.json");
+    let unknown = bundled.join("unknown.json");
+    std::fs::write(&global, b"keep global bytes\n").unwrap();
+    std::fs::write(&personal, b"keep personal bytes\n").unwrap();
+    std::fs::write(&unknown, b"keep unknown bytes\n").unwrap();
+    std::fs::write(bundled.join("pi.json"), b"replace managed bytes\n").unwrap();
     let mut output = Vec::new();
 
-    run_with(
-        &home,
-        bin.as_os_str(),
-        true,
-        |profiles, defaults| {
-            assert_eq!(
-                profiles
-                    .iter()
-                    .map(|profile| profile.id)
-                    .collect::<Vec<_>>(),
-                ["pi", "claude", "codex"]
-            );
-            assert_eq!(defaults, [true, true, true]);
-            Ok(Some(vec![0, 2]))
-        },
-        &mut output,
-    )
-    .unwrap();
+    run_with(&home, &mut output).unwrap();
 
-    assert_eq!(
-        config::read_setup_profiles_in(&home).unwrap(),
-        ["codex", "pi"]
-    );
-    assert_eq!(
-        std::fs::read(&global_config).unwrap(),
-        b"keep global config bytes\n"
-    );
+    assert_eq!(std::fs::read(&global).unwrap(), b"keep global bytes\n");
+    assert_eq!(std::fs::read(&personal).unwrap(), b"keep personal bytes\n");
+    assert_eq!(std::fs::read(&unknown).unwrap(), b"keep unknown bytes\n");
+    for id in ["pi", "claude", "codex", "copilot"] {
+        let path = bundled.join(format!("{id}.json"));
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert!(json["_warning"].as_str().unwrap().contains("may overwrite"));
+    }
     let output = String::from_utf8(output).unwrap();
-    assert!(output.contains("Enabled profiles: codex, pi"));
-    assert!(output.contains("setup-profiles.json"));
-    let _ = std::fs::remove_dir_all(temp);
-}
-
-#[test]
-fn no_detection_does_not_create_registry_state() {
-    let temp = test_home("none");
-    let home = temp.join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    let mut output = Vec::new();
-
-    run_with(
-        &home,
-        OsStr::new(""),
-        true,
-        |_, _| panic!("selector must not be shown"),
-        &mut output,
-    )
-    .unwrap();
-
-    assert!(!config::setup_profiles_path(&home).exists());
-    assert!(String::from_utf8(output)
-        .unwrap()
-        .contains("No supported coding harnesses detected"));
+    assert!(output.contains("Bundled profiles refreshed:"));
+    assert!(output.contains("pi, claude, codex, copilot"));
     let _ = std::fs::remove_dir_all(temp);
 }
 
 #[cfg(unix)]
 #[test]
-fn cancellation_and_non_tty_preserve_previous_registry_bytes() {
-    use std::os::unix::fs::PermissionsExt;
+fn setup_rejects_an_unsafe_bundled_directory_without_touching_its_target() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
 
-    let temp = test_home("preserve");
+    let temp = test_home("unsafe");
     let home = temp.join("home");
-    let bin = temp.join("bin");
-    std::fs::create_dir_all(&home).unwrap();
-    std::fs::create_dir_all(&bin).unwrap();
-    let executable = bin.join("pi");
-    std::fs::write(&executable, "#!/bin/sh\nexit 99\n").unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let registry = config::write_setup_profiles_in(&home, &["pi".into()]).unwrap();
-    let before = std::fs::read(&registry).unwrap();
+    let profiles = home.join(".cdm/profiles");
+    let outside = temp.join("outside");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::write(outside.join("sentinel"), b"unchanged\n").unwrap();
+    symlink(&outside, profiles.join("bundled")).unwrap();
 
-    let cancel = run_with(
-        &home,
-        bin.as_os_str(),
-        true,
-        |_, _| Ok(None),
-        &mut Vec::new(),
-    )
-    .unwrap_err();
-    assert_eq!(cancel.kind(), io::ErrorKind::Interrupted);
-    assert_eq!(std::fs::read(&registry).unwrap(), before);
+    let error = run_with(&home, &mut Vec::new()).unwrap_err();
 
-    let non_tty = run_with(
-        &home,
-        bin.as_os_str(),
-        false,
-        |_, _| panic!("selector must not be shown"),
-        &mut Vec::new(),
-    )
-    .unwrap_err();
-    assert_eq!(non_tty.kind(), io::ErrorKind::InvalidInput);
-    assert!(non_tty.to_string().contains("interactive terminal"));
-    assert_eq!(std::fs::read(&registry).unwrap(), before);
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        std::fs::read(outside.join("sentinel")).unwrap(),
+        b"unchanged\n"
+    );
+    assert!(!outside.join("pi.json").exists());
     let _ = std::fs::remove_dir_all(temp);
 }

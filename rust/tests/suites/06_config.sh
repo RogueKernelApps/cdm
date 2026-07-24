@@ -167,30 +167,60 @@ fi
 
 # Test: built-in profiles remain explicit and independent from same-named user presets.
 if has_native; then
+    SETUP_PROFILE_HOME=$(mktemp -d "$TEST_TMP/cdm_profile_setup_test.XXXXXX")
+    SETUP_OUTPUT=$(HOME="$SETUP_PROFILE_HOME" "$CDM" setup 2>&1)
+    if [ "$?" -eq 0 ] && grep -Fq 'Bundled profiles refreshed:' <<<"$SETUP_OUTPUT" && \
+        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json" ] && \
+        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/claude.json" ] && \
+        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/codex.json" ] && \
+        [ -f "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/copilot.json" ]; then
+        printf "  ${GREEN}PASS${NC} config: setup materializes the complete bundled catalog\n"; PASS=$((PASS + 1))
+    else
+        printf "  ${RED}FAIL${NC} config: setup did not materialize the complete bundled catalog\n"; FAIL=$((FAIL + 1))
+    fi
+    printf 'personal bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json"
+    printf 'unknown bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/unknown.json"
+    printf 'modified managed bytes\n' > "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json"
+    HOME="$SETUP_PROFILE_HOME" "$CDM" setup >/dev/null
+    if [ "$(cat "$SETUP_PROFILE_HOME/.cdm/profiles/personal.json")" = "personal bytes" ] && \
+        [ "$(cat "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/unknown.json")" = "unknown bytes" ] && \
+        grep -Fq '"_warning"' "$SETUP_PROFILE_HOME/.cdm/profiles/bundled/pi.json"; then
+        printf "  ${GREEN}PASS${NC} config: setup refreshes managed files and preserves user files\n"; PASS=$((PASS + 1))
+    else
+        printf "  ${RED}FAIL${NC} config: setup refresh damaged unmanaged profile state\n"; FAIL=$((FAIL + 1))
+    fi
+    remove_test_path "$SETUP_PROFILE_HOME"
+
     PROFILE_ROOT=$(mktemp -d "$TEST_TMP/cdm_profile_test.XXXXXX")
     PROFILE_HOME="$PROFILE_ROOT/home"
     PROFILE_PROJECT="$PROFILE_ROOT/project"
     PROFILE_PRESET_STATE="$PROFILE_ROOT/preset-state"
+    PROFILE_PERSONAL_STATE="$PROFILE_ROOT/personal-state"
+    PROFILE_WORK_STATE="$PROFILE_ROOT/work-state"
     mkdir -p "$PROFILE_HOME/.cdm" "$PROFILE_HOME/.pi/agent/sessions" \
-        "$PROFILE_PROJECT" "$PROFILE_PRESET_STATE"
+        "$PROFILE_PROJECT" "$PROFILE_PRESET_STATE" "$PROFILE_PERSONAL_STATE" "$PROFILE_WORK_STATE"
     chmod 700 "$PROFILE_HOME/.cdm"
+    HOME="$PROFILE_HOME" "$CDM" setup >/dev/null
     printf 'profile instructions\n' > "$PROFILE_HOME/.pi/agent/AGENTS.md"
-    printf '{"version":1,"enabled_profile_ids":["pi"]}\n' \
-        > "$PROFILE_HOME/.cdm/setup-profiles.json"
-    chmod 600 "$PROFILE_HOME/.cdm/setup-profiles.json"
-    printf '{"presets":{"pi":{"paths":{"allow_rw":["%s"]}}}}\n' \
+    printf '{"import":["bundled/codex.json"],"paths":{"allow_rw":["%s"]}}\n' "$PROFILE_PERSONAL_STATE" \
+        > "$PROFILE_HOME/.cdm/profiles/personal.json"
+    printf '{"import":["personal.json"],"paths":{"allow_rw":["%s"]}}\n' \
+        "$PROFILE_WORK_STATE" > "$PROFILE_HOME/.cdm/profiles/work.json"
+    printf '{"import":["work.json"],"paths":{"allow_rw":[".cdm/profiles"]},"presets":{"pi":{"paths":{"allow_rw":["%s"]}}}}\n' \
         "$PROFILE_PRESET_STATE" > "$PROFILE_HOME/.cdm/config.json"
     CONFIG_BEFORE=$(cat "$PROFILE_HOME/.cdm/config.json")
 
     PROFILE_OUTPUT=$(cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
         CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
         "$CDM" --profile pi --preset pi --no-proxy sh -c \
-        "touch '$PROFILE_HOME/.pi/agent/sessions/from-profile' '$PROFILE_PRESET_STATE/from-preset'" \
+        "touch '$PROFILE_HOME/.pi/agent/sessions/from-profile' '$PROFILE_PRESET_STATE/from-preset' '$PROFILE_PERSONAL_STATE/from-personal' '$PROFILE_WORK_STATE/from-work'" \
         2>&1)
     PROFILE_RC=$?
     if [ "$PROFILE_RC" -eq 0 ] && \
         [ -f "$PROFILE_HOME/.pi/agent/sessions/from-profile" ] && \
         [ -f "$PROFILE_PRESET_STATE/from-preset" ] && \
+        [ -f "$PROFILE_PERSONAL_STATE/from-personal" ] && \
+        [ -f "$PROFILE_WORK_STATE/from-work" ] && \
         grep -Fq '[profile:pi]' <<<"$PROFILE_OUTPUT"; then
         printf "  ${GREEN}PASS${NC} config: explicit profile and same-named preset apply independently\n"; PASS=$((PASS + 1))
     else
@@ -198,6 +228,15 @@ if has_native; then
     fi
     check_eq "config: profile invocation does not rewrite global config" \
         "$(cat "$PROFILE_HOME/.cdm/config.json")" "$CONFIG_BEFORE"
+
+    if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
+        CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
+        "$CDM" --no-proxy sh -c \
+        "printf tampered > '$PROFILE_HOME/.cdm/profiles/personal.json'") >/dev/null 2>&1; then
+        printf "  ${RED}FAIL${NC} config: loaded imported policy was writable through a broad grant\n"; FAIL=$((FAIL + 1))
+    else
+        printf "  ${GREEN}PASS${NC} config: loaded imported policy overrides a broad writable grant\n"; PASS=$((PASS + 1))
+    fi
 
     if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
         CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \

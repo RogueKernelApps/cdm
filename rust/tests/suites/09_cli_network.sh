@@ -85,9 +85,9 @@ else
 fi
 STDERR=$(HOME="$PROFILE_ERROR_HOME" "$CDM" --profile pi true 2>&1 >/dev/null)
 if [ "$?" -eq 2 ] && grep -Fq 'cdm setup' <<<"$STDERR"; then
-    printf "  ${GREEN}PASS${NC} known but disabled profile points to setup\n"; PASS=$((PASS + 1))
+    printf "  ${GREEN}PASS${NC} unmaterialized known profile points to setup\n"; PASS=$((PASS + 1))
 else
-    printf "  ${RED}FAIL${NC} known but disabled profile points to setup\n"; FAIL=$((FAIL + 1))
+    printf "  ${RED}FAIL${NC} unmaterialized known profile points to setup\n"; FAIL=$((FAIL + 1))
 fi
 remove_test_path "$PROFILE_ERROR_HOME"
 

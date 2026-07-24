@@ -217,6 +217,7 @@ fn test_legacy_and_unknown_fields_are_rejected() {
             "accepted {json}"
         );
     }
+    assert!(serde_json::from_str::<ConfigLayer>(r#"{"imports":[]}"#).is_err());
 }
 
 #[test]
@@ -623,13 +624,6 @@ fn built_in_profile_catalog_is_stable_and_splits_read_only_from_mutable_state() 
             .collect::<Vec<_>>(),
         ["pi", "claude", "codex", "copilot"]
     );
-    assert_eq!(
-        profiles
-            .iter()
-            .map(|profile| profile.executable)
-            .collect::<Vec<_>>(),
-        ["pi", "claude", "codex", "copilot"]
-    );
     for profile in profiles {
         assert!(
             !profile.allow_ro.is_empty(),
@@ -641,104 +635,11 @@ fn built_in_profile_catalog_is_stable_and_splits_read_only_from_mutable_state() 
             "{} needs mutable state",
             profile.id
         );
-        assert!(
-            !profile.markers.is_empty(),
-            "{} needs a state marker",
-            profile.id
-        );
     }
 }
 
-#[cfg(unix)]
 #[test]
-fn setup_profile_registry_round_trips_privately_and_idempotently() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let temp = std::env::temp_dir().join(format!("cdm-setup-registry-{}", std::process::id()));
-    let home = temp.join("home");
-    std::fs::create_dir_all(&home).unwrap();
-
-    let path =
-        write_setup_profiles_in(&home, &["pi".into(), "claude".into(), "pi".into()]).unwrap();
-    assert_eq!(read_setup_profiles_in(&home).unwrap(), ["claude", "pi"]);
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
-    assert_eq!(
-        std::fs::metadata(path.parent().unwrap())
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o700
-    );
-    let before = std::fs::read(&path).unwrap();
-    write_setup_profiles_in(&home, &["pi".into(), "claude".into()]).unwrap();
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-    let _ = std::fs::remove_dir_all(temp);
-}
-
-#[cfg(unix)]
-#[test]
-fn setup_profile_registry_rejects_malformed_unknown_and_unsafe_state_without_replacing_it() {
-    use std::fs::hard_link;
-    use std::os::unix::fs::{symlink, PermissionsExt};
-
-    let temp =
-        std::env::temp_dir().join(format!("cdm-unsafe-setup-registry-{}", std::process::id()));
-    let home = temp.join("home");
-    let parent = home.join(".cdm");
-    let path = parent.join(SETUP_PROFILES_FILE);
-    std::fs::create_dir_all(&parent).unwrap();
-    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-    for bytes in [
-        br#"{"version":2,"enabled_profile_ids":[]}"#.as_slice(),
-        br#"{"version":1,"enabled_profile_ids":["unknown"]}"#.as_slice(),
-        br#"{"version":1,"enabled_profile_ids":["pi","pi"]}"#.as_slice(),
-        br#"{"version":1,"enabled_profile_ids":[],"extra":true}"#.as_slice(),
-    ] {
-        std::fs::write(&path, bytes).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        assert!(read_setup_profiles_in(&home).is_err());
-        let before = std::fs::read(&path).unwrap();
-        assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
-        assert_eq!(std::fs::read(&path).unwrap(), before);
-    }
-
-    std::fs::write(&path, br#"{"version":1,"enabled_profile_ids":["pi"]}"#).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-    let before = std::fs::read(&path).unwrap();
-    assert!(write_setup_profiles_in(&home, &["claude".into()]).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let before = std::fs::read(&path).unwrap();
-    assert!(write_setup_profiles_in(&home, &["claude".into()]).is_err());
-    assert_eq!(std::fs::read(&path).unwrap(), before);
-    std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
-
-    std::fs::remove_file(&path).unwrap();
-    let target = temp.join("target.json");
-    std::fs::write(&target, br#"{"version":1,"enabled_profile_ids":[]}"#).unwrap();
-    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
-    symlink(&target, &path).unwrap();
-    assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
-    std::fs::remove_file(&path).unwrap();
-
-    hard_link(&target, &path).unwrap();
-    assert!(write_setup_profiles_in(&home, &["pi".into()]).is_err());
-    assert_eq!(
-        std::fs::read(&target).unwrap(),
-        br#"{"version":1,"enabled_profile_ids":[]}"#
-    );
-    let _ = std::fs::remove_dir_all(temp);
-}
-
-#[test]
-fn explicit_enabled_profiles_apply_before_presets_and_project_with_distinct_origins() {
+fn explicit_profiles_apply_before_presets_and_project_with_distinct_origins() {
     let temp = std::env::temp_dir().join(format!("cdm-profile-layering-{}", std::process::id()));
     let home = temp.join("home");
     let global = temp.join("global.json");
@@ -768,7 +669,7 @@ fn explicit_enabled_profiles_apply_before_presets_and_project_with_distinct_orig
         )
         .unwrap();
     }
-    write_setup_profiles_in(&home, &["pi".into(), "claude".into()]).unwrap();
+    materialize_bundled_profiles_in(&home).unwrap();
 
     let loaded = load_from_paths_with_profiles(
         &global,
@@ -777,7 +678,6 @@ fn explicit_enabled_profiles_apply_before_presets_and_project_with_distinct_orig
         &["claude".into(), "pi".into()],
         &["pi".into()],
         &trust_path,
-        &setup_profiles_path(&home),
     )
     .unwrap();
     assert!(loaded.paths.allow_ro.iter().any(|path| {
@@ -813,24 +713,382 @@ fn explicit_enabled_profiles_apply_before_presets_and_project_with_distinct_orig
         .allow_rw
         .iter()
         .any(|path| path.origin == Origin::Project));
-    let registry = setup_profiles_path(&home);
-    for protected in [registry.as_path(), registry.parent().unwrap()] {
-        assert!(loaded.paths.deny_write.iter().any(|path| {
-            path.value == protected.to_string_lossy() && path.relative_to.as_os_str().is_empty()
-        }));
-    }
-
-    let error = load_from_paths_with_profiles(
+    let codex = load_from_paths_with_profiles(
         &global,
         &project,
         &home,
         &["codex".into()],
         &[],
         &trust_path,
-        &setup_profiles_path(&home),
     )
-    .unwrap_err();
-    assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    .unwrap();
+    assert!(codex
+        .paths
+        .allow_ro
+        .iter()
+        .any(|path| path.origin == Origin::Profile("codex".into())));
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn bundled_profiles_are_materialized_as_private_readable_managed_json() {
+    let temp = std::env::temp_dir().join(format!("cdm-bundled-profiles-{}", std::process::id()));
+    let home = temp.join("home");
+    let profiles = home.join(".cdm/profiles");
+    let bundled = profiles.join("bundled");
+    std::fs::create_dir_all(&bundled).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone(), bundled.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::write(profiles.join("personal.json"), b"personal bytes\n").unwrap();
+    std::fs::write(bundled.join("unknown.json"), b"unknown bytes\n").unwrap();
+    std::fs::write(bundled.join("pi.json"), b"modified\n").unwrap();
+
+    materialize_bundled_profiles_in(&home).unwrap();
+
+    assert_eq!(
+        std::fs::read(profiles.join("personal.json")).unwrap(),
+        b"personal bytes\n"
+    );
+    assert_eq!(
+        std::fs::read(bundled.join("unknown.json")).unwrap(),
+        b"unknown bytes\n"
+    );
+    for profile in built_in_profiles() {
+        let path = bundled.join(format!("{}.json", profile.id));
+        let bytes = std::fs::read(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            json["_warning"], BUNDLED_PROFILE_WARNING,
+            "{} warning",
+            profile.id
+        );
+        assert_eq!(
+            json["paths"]["allow_ro"],
+            serde_json::json!(profile.allow_ro),
+            "{} read-only policy",
+            profile.id
+        );
+        assert_eq!(
+            json["paths"]["allow_rw"],
+            serde_json::json!(profile.allow_rw),
+            "{} writable policy",
+            profile.id
+        );
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    for directory in [home.join(".cdm"), profiles, bundled] {
+        assert_eq!(
+            std::fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_imports_are_recursive_ordered_current_last_and_home_anchored() {
+    let temp = std::env::temp_dir().join(format!("cdm-profile-imports-{}", std::process::id()));
+    let home = temp.join("home");
+    let profiles = home.join(".cdm/profiles");
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&profiles).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    std::fs::write(
+        profiles.join("personal.json"),
+        r#"{"paths":{"allow_ro":["personal"]},"proxy":{"default_port":18081}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        profiles.join("work.json"),
+        r#"{"import":["personal.json"],"paths":{"allow_ro":["work"]},"proxy":{"default_port":18082}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &global,
+        r#"{"import":["~/.cdm/profiles/work.json"],"paths":{"allow_ro":["current"]},"proxy":{"default_port":18083}}"#,
+    )
+    .unwrap();
+
+    let project = ProjectContext {
+        launch_dir: temp.clone(),
+        root: temp.clone(),
+        config_path: None,
+    };
+    let loaded = load_from_paths(&global, &project, &home, &[], &trust).unwrap();
+    let imported = loaded
+        .paths
+        .allow_ro
+        .iter()
+        .filter(|path| ["personal", "work", "current"].contains(&path.value.as_str()))
+        .map(|path| (path.value.as_str(), path.relative_to.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        imported,
+        [
+            ("personal", home.clone()),
+            ("work", home.clone()),
+            ("current", home.clone())
+        ]
+    );
+    assert_eq!(loaded.value.proxy.default_port, 18083);
+    for protected in [
+        profiles.join("personal.json"),
+        profiles.join("work.json"),
+        profiles.clone(),
+    ] {
+        assert!(loaded.paths.deny_write.iter().any(|path| {
+            path.value == protected.to_string_lossy() && path.relative_to.as_os_str().is_empty()
+        }));
+    }
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn imported_bundled_profile_retains_profile_origin() {
+    let temp = std::env::temp_dir().join(format!(
+        "cdm-imported-bundled-profile-{}",
+        std::process::id()
+    ));
+    let home = temp.join("home");
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&home).unwrap();
+    materialize_bundled_profiles_in(&home).unwrap();
+    std::fs::write(&global, r#"{"import":["bundled/pi.json"]}"#).unwrap();
+    let project = ProjectContext {
+        launch_dir: temp.clone(),
+        root: temp.clone(),
+        config_path: None,
+    };
+
+    let loaded = load_from_paths(&global, &project, &home, &[], &trust).unwrap();
+
+    assert!(loaded
+        .paths
+        .allow_ro
+        .iter()
+        .any(|path| path.value == ".pi/agent" && path.origin == Origin::Profile("pi".into())));
+    assert!(loaded
+        .paths
+        .allow_rw
+        .iter()
+        .all(|path| path.origin == Origin::Profile("pi".into())));
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn trusted_project_imports_user_profiles_but_keeps_direct_paths_project_relative() {
+    let temp =
+        std::env::temp_dir().join(format!("cdm-project-profile-import-{}", std::process::id()));
+    let home = temp.join("home");
+    let profiles = home.join(".cdm/profiles");
+    let project_root = temp.join("project");
+    let project_path = project_root.join(PROJECT_CONFIG);
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&profiles).unwrap();
+    std::fs::create_dir_all(project_path.parent().unwrap()).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    materialize_bundled_profiles_in(&home).unwrap();
+    std::fs::write(
+        profiles.join("work.json"),
+        r#"{"import":["bundled/pi.json"],"paths":{"allow_ro":["home-path"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &project_path,
+        r#"{"import":["work.json"],"paths":{"allow_ro":["project-path"]}}"#,
+    )
+    .unwrap();
+    let project = ProjectContext {
+        launch_dir: project_root.clone(),
+        root: project_root.clone(),
+        config_path: Some(project_path),
+    };
+    trust_project_in(&project, &trust).unwrap();
+
+    let loaded = load_from_paths(&global, &project, &home, &[], &trust).unwrap();
+    assert!(loaded.paths.allow_ro.contains(&ConfiguredPath {
+        value: "home-path".into(),
+        relative_to: home.clone(),
+        origin: Origin::Project,
+    }));
+    assert!(loaded.paths.allow_ro.contains(&ConfiguredPath {
+        value: "project-path".into(),
+        relative_to: project_root,
+        origin: Origin::Project,
+    }));
+    assert!(loaded
+        .paths
+        .allow_ro
+        .iter()
+        .any(|path| path.value == ".pi/agent" && path.origin == Origin::Profile("pi".into())));
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn unsafe_and_cyclic_profile_imports_fail_closed() {
+    use std::fs::hard_link;
+    use std::os::unix::fs::symlink;
+
+    let temp =
+        std::env::temp_dir().join(format!("cdm-unsafe-profile-imports-{}", std::process::id()));
+    let home = temp.join("home");
+    let profiles = home.join(".cdm/profiles");
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&profiles).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let project = ProjectContext {
+        launch_dir: temp.clone(),
+        root: temp.clone(),
+        config_path: None,
+    };
+
+    std::fs::write(&global, r#"{"import":["a.json"]}"#).unwrap();
+    std::fs::write(profiles.join("a.json"), r#"{"import":["b.json"]}"#).unwrap();
+    std::fs::write(profiles.join("b.json"), r#"{"import":["a.json"]}"#).unwrap();
+    let cycle = load_from_paths(&global, &project, &home, &[], &trust).unwrap_err();
+    assert!(cycle.to_string().contains("a.json -> b.json -> a.json"));
+
+    for import in ["../escape.json", "/absolute.json"] {
+        std::fs::write(&global, format!(r#"{{"import":[{import:?}]}}"#)).unwrap();
+        assert_eq!(
+            load_from_paths(&global, &project, &home, &[], &trust)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
+
+    let target = profiles.join("target.json");
+    std::fs::write(&target, "{}").unwrap();
+    let linked = profiles.join("linked.json");
+    hard_link(&target, &linked).unwrap();
+    std::fs::write(&global, r#"{"import":["linked.json"]}"#).unwrap();
+    assert!(load_from_paths(&global, &project, &home, &[], &trust)
+        .unwrap_err()
+        .to_string()
+        .contains("hard links"));
+    std::fs::remove_file(&linked).unwrap();
+    symlink(&target, &linked).unwrap();
+    assert!(load_from_paths(&global, &project, &home, &[], &trust).is_err());
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn profile_imports_reject_group_or_world_writable_files() {
+    let temp = std::env::temp_dir().join(format!(
+        "cdm-writable-profile-import-{}",
+        std::process::id()
+    ));
+    let home = temp.join("home");
+    let profiles = home.join(".cdm/profiles");
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&profiles).unwrap();
+    for directory in [home.join(".cdm"), profiles.clone()] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let profile = profiles.join("writable.json");
+    std::fs::write(&profile, "{}").unwrap();
+    std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o666)).unwrap();
+    std::fs::write(&global, r#"{"import":["writable.json"]}"#).unwrap();
+    let project = ProjectContext {
+        launch_dir: temp.clone(),
+        root: temp.clone(),
+        config_path: None,
+    };
+
+    let error = load_from_paths(&global, &project, &home, &[], &trust).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("group/world writable"));
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn bundled_profile_materialization_rejects_fifo_targets() {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let temp = std::env::temp_dir().join(format!("cdm-bundled-fifo-{}", std::process::id()));
+    let home = temp.join("home");
+    let bundled = home.join(".cdm/profiles/bundled");
+    std::fs::create_dir_all(&bundled).unwrap();
+    for directory in [
+        home.join(".cdm"),
+        home.join(".cdm/profiles"),
+        bundled.clone(),
+    ] {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let fifo = bundled.join("pi.json");
+    let fifo_bytes = CString::new(fifo.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo_bytes.as_ptr(), 0o600) }, 0);
+
+    let error = materialize_bundled_profiles_in(&home).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("not a regular file"));
+    let _ = std::fs::remove_dir_all(temp);
+}
+
+#[cfg(unix)]
+#[test]
+fn known_profile_loads_materialized_bytes_and_missing_file_has_no_compiled_fallback() {
+    let temp = std::env::temp_dir().join(format!(
+        "cdm-materialized-profile-load-{}",
+        std::process::id()
+    ));
+    let home = temp.join("home");
+    let global = home.join(".cdm/config.json");
+    let trust = home.join(".cdm/trusted-projects.json");
+    std::fs::create_dir_all(&home).unwrap();
+    let project = ProjectContext {
+        launch_dir: temp.clone(),
+        root: temp.clone(),
+        config_path: None,
+    };
+    let unmaterialized =
+        load_from_paths_with_profiles(&global, &project, &home, &["pi".into()], &[], &trust)
+            .unwrap_err();
+    assert_eq!(unmaterialized.kind(), io::ErrorKind::NotFound);
+    assert!(unmaterialized.to_string().contains("cdm setup"));
+
+    materialize_bundled_profiles_in(&home).unwrap();
+    let pi = home.join(".cdm/profiles/bundled/pi.json");
+    std::fs::write(&pi, r#"{"paths":{"allow_ro":["from-disk"]}}"#).unwrap();
+    std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let loaded =
+        load_from_paths_with_profiles(&global, &project, &home, &["pi".into()], &[], &trust)
+            .unwrap();
+    assert!(loaded.paths.allow_ro.contains(&ConfiguredPath {
+        value: "from-disk".into(),
+        relative_to: home.clone(),
+        origin: Origin::Profile("pi".into()),
+    }));
+    std::fs::remove_file(pi).unwrap();
+    let error =
+        load_from_paths_with_profiles(&global, &project, &home, &["pi".into()], &[], &trust)
+            .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
     assert!(error.to_string().contains("cdm setup"));
     let _ = std::fs::remove_dir_all(temp);
 }

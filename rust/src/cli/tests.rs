@@ -228,7 +228,7 @@ fn generated_help_documents_structured_report_options() {
     assert!(output.contains("--preset <NAME>"));
     assert!(output.contains("--profile <ID>"));
     assert!(output.contains("cdm setup"));
-    assert!(output.contains("Interactively enable detected coding-harness profiles"));
+    assert!(output.contains("Refresh transparent bundled coding-harness profiles"));
     assert!(output.contains("pi, claude, codex, copilot"));
     assert!(output.contains("read/write is the default"));
     assert!(output.contains("cdm trust"));

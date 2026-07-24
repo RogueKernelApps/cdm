@@ -1,6 +1,6 @@
 # CDM — Specification
 
-Version: 0.1.4
+Version: 0.1.5
 
 Updated 22 July 2026. `ARCHITECTURE.md` defines the component and trust model; this file defines expected behavior.
 
@@ -21,7 +21,7 @@ CDM wraps any command in an OS-native sandbox. By default it uses direct network
 cdm <command> [args...]           # Shorthand: run command in sandbox
 cdm run [flags] <command> [args]  # Explicit run with flags
 cdm config                        # Generate default config at ~/.cdm/config.json
-cdm setup                         # Select detected built-in access profiles
+cdm setup                         # Refresh bundled access-profile JSON
 cdm trust                         # Trust the nearest project config's exact bytes
 cdm project                       # Report discovered root, kind, and config
 cdm completions <bash|zsh|fish>   # Write shell completion source to stdout
@@ -31,40 +31,35 @@ cdm help                          # Print usage
 
 If no command is given, CDM prints help and exits successfully. `cdm run` without a command launches the user's `$SHELL` (fallback: `/bin/bash`).
 
-`cdm config` is create-only and must not overwrite an existing configuration. When it creates the default policy directory, that directory has mode 0700 so guided setup can use it safely. `cdm setup` is a distinct argument-free built-in and must never modify the global config. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
+`cdm config` is create-only and must not overwrite an existing configuration. When it creates the default policy directory, that directory has mode 0700 so bundled-profile setup can use it safely. `cdm setup` is a distinct argument-free built-in and must never modify the global config. `cdm trust` requires a nearest project config and atomically records its exact SHA-256 digest outside the workspace. `cdm project` is observational only: it reports a deterministic marker-based kind (`rust`, `node`, `python`, `go`, `git`, or `generic`) and never grants access. CDM parses command arguments without lossy UTF-8 conversion and generates help and shell completion from the same typed command definition.
 
-Configuration precedence is built-in defaults, the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), enabled built-in profiles explicitly selected left-to-right with `--profile`, named global presets selected left-to-right, the trusted nearest project `.cdm/config.json` discovered from the original launch directory, then CLI flags. Path arrays are additive and deduplicated; other explicitly supplied fields replace the lower layer. Global/profile/preset relative paths resolve from `$HOME`, project relative paths from the project root, and CLI relative paths from the effective workspace. Built-in profile and user preset namespaces are independent. Project and nested presets are invalid. Unknown or disabled profile IDs and unknown presets are errors. Hard denials cannot be removed by a higher layer. A wrapped executable never implies a profile.
+Configuration precedence is built-in defaults, global imports then the global file (`~/.cdm/config.json` or `CDM_CONFIG_PATH`), materialized bundled profiles explicitly selected left-to-right with `--profile`, named global presets selected left-to-right, trusted project imports then the nearest project `.cdm/config.json` discovered from the original launch directory, and CLI flags. A document's `import` array names user-controlled files beneath `~/.cdm/profiles/`; expansion is recursive depth-first in listed order, imported documents merge left-to-right, and the importing document merges last. Top-level names are relative to the profile root and nested names to the importing profile directory; a literal `~/.cdm/profiles/` prefix restarts resolution from that root. Other absolute names and traversal components are invalid. Path arrays are additive and deduplicated in encounter order; maps merge with later keys winning; other explicitly supplied fields replace the lower layer. Global/bundled/user-profile/preset relative paths resolve from `$HOME`; paths declared directly in project config resolve from the project root, and CLI relative paths from the effective workspace. Built-in profile and user preset namespaces are independent. Project and nested presets plus imports inside presets are invalid. Unknown profile IDs, unknown presets, missing/malformed/unknown-field/linked/unsafe-permission imports, and import cycles are errors before child execution. Hard denials cannot be removed by a higher layer. A wrapped executable never implies a profile.
+An imported managed bundled file retains `[profile:ID]` provenance and optional-state semantics instead of inheriting the global or project origin of the document that imported it.
 
-Guided setup initially supports `pi`, `claude`, `codex`, and `copilot`, in that
-catalog order. A tool is detected when its named executable is present and
-executable on `PATH`, or when one of its fixed user-state markers exists. CDM
-must not execute a candidate or recursively scan user directories during
-detection. Only detected entries are displayed, all are selected by default,
-arrow keys navigate, Space toggles, Enter accepts, and Escape or `q` cancels.
-No detections produce a successful no-change result. Setup requires both stdin
-and stderr to be terminals; non-TTY use is rejected before any registry write.
+Setup materializes exactly `pi.json`, `claude.json`, `codex.json`, and
+`copilot.json` under `~/.cdm/profiles/bundled/`; `claude` is the catalog ID while
+“Claude Code” is display text. Every mode-0600 file is readable valid JSON and
+contains the string `_warning`: “This is a CDM-managed bundled profile. CDM
+upgrades may overwrite this file. Extend or override it from a profile you own
+instead of editing it.” Setup is non-interactive and refreshes all four files on
+every successful invocation. Writes use mode-0600 create-new temporary files and
+atomic replacement beneath real mode-0700 `profiles` and `bundled` directories.
+The global config, user profiles, and unknown bundled files are preserved.
+Incomplete refresh is an error and is safely retryable. The compiled catalog
+remains authoritative for IDs and generated contents. Runtime loads selected
+profile JSON without a compiled policy fallback; a missing selected file or
+profile directory fails with an instruction to run `cdm setup`. Every known ID
+is directly selectable after materialization. There is no profile enablement
+registry, detection behavior, migration path, or accepted legacy profile schema.
 
-Setup persists only selected IDs in
-`~/.cdm/setup-profiles.json` as
-`{"version":1,"enabled_profile_ids":[...]}`. IDs are unique and written in
-deterministic order. The registry must be a current-user-owned, regular,
-single-link, mode-0600 file beneath a real, current-user-owned mode-0700
-`~/.cdm` directory. Reads use `O_NOFOLLOW`; unknown fields, duplicate or unknown
-IDs, unsupported versions, malformed JSON, unsafe ownership/permissions,
-symlinks, and hard links are errors. Updates use a mode-0600 create-new
-temporary file, sync, and atomic rename. Non-TTY use, cancellation, validation
-errors, and pre-publication write failures preserve prior registry and global
-config bytes. The registry file and its containing policy directory are hard
-write-denied to native and VM children.
-
-Compiled profiles divide existing per-tool state into read-only customization
+Bundled profiles divide existing per-tool state into read-only customization
 roots and narrower read/write authentication, settings, trust, session/history,
 cache/log, package/plugin, and database paths. Missing optional built-in profile
 paths are omitted rather than causing a failure or widening access; missing
 explicit configuration and CLI grants remain errors. Profile-contributed paths
 retain terminal-safe `[profile:ID]` provenance.
 
-The project config is loaded only when its exact bytes match `~/.cdm/trusted-projects.json`. The trust store must be owned by the current user, mode 0600, and updated by create-and-rename from a mode-0600 temporary file. Policy reads use one `O_NOFOLLOW` descriptor for regular-file metadata, bytes, hashing, and parsing; files with multiple hard links are rejected. Any project-config byte edit invalidates trust. The global config, trust store, project config, and their dedicated containing policy directories are write-denied inside the child sandbox so explicit grants cannot replace them or rename/swap their parents. A custom global config parent must already be a real directory owned by the invoking UID with no group/world write bits. Direct placement beneath `/`, `/tmp`, `/private/tmp`, `$HOME`, the trusted temporary root, or the project root is rejected because CDM cannot safely deny those broad parents in full.
+The project config is loaded only when its exact bytes match `~/.cdm/trusted-projects.json`. The trust store must be owned by the current user, mode 0600, and updated by create-and-rename from a mode-0600 temporary file. Policy reads use one `O_NOFOLLOW` descriptor for regular-file metadata, bytes, hashing, and parsing; files with multiple hard links are rejected. Any project-config byte edit invalidates trust. Its trusted bytes bind ordered import names, but those names may resolve only to host-owned policy under the pinned `~/.cdm/profiles/` root; project-local imports are unsupported. Imported files are current-user-owned, non-group/world-writable, regular, single-link files opened descriptor-relatively beneath real, user-owned, non-group/world-writable profile directories without following symlink roots, ancestors, or leaves. Every loaded file and containing directory is write-denied inside the child, as are global config, trust store, project config, and their dedicated policy directories, so explicit grants cannot replace them or rename/swap their parents. A custom global config parent must already be a real directory owned by the invoking UID with no group/world write bits. Direct placement beneath `/`, `/tmp`, `/private/tmp`, `$HOME`, the trusted temporary root, or the project root is rejected because CDM cannot safely deny those broad parents in full.
 
 ### Flags
 
@@ -102,7 +97,7 @@ The project config is loaded only when its exact bytes match `~/.cdm/trusted-pro
 
 ### Exit Behaviour
 
-CDM exits with the sandboxed command's exit code. CLI, configuration, guided-setup, trust, and preflight validation refusals use status 2. Other CDM failures (for example sandbox setup) exit non-zero with a log message to stderr.
+CDM exits with the sandboxed command's exit code. CLI, configuration, profile-setup, trust, and preflight validation refusals use status 2. Other CDM failures (for example sandbox setup) exit non-zero with a log message to stderr.
 
 Every native host adapter command runs in a dedicated supervised process group. CDM
 hands an interactive terminal to that group, forwards parent-delivered
@@ -610,7 +605,7 @@ CDM integrity paths are always read-only inside the sandbox, even if they fall i
 
 | Path | Reason |
 |------|--------|
-| Global config/trust-store directory and project `.cdm` directory | Always: prevent policy mutation or parent replacement |
+| Global config/trust-store directory, loaded profile files/directories, and project `.cdm` directory | Always: prevent policy mutation or parent replacement |
 | Private invocation runtime and effective VM rootfs cache | Always: preserve trusted runtime state |
 | Discovered sensitive files | When discovered by `--scramble` or `--sec`: prevent real secret disclosure or mutation |
 | `--worktree` gitfile, actual Git directory, and common Git directory | Always: prevent post-sandbox Git redirection, hooks, filters, ref/index mutation, and host execution |
@@ -623,7 +618,7 @@ CDM integrity paths are always read-only inside the sandbox, even if they fall i
 
 Relative paths are resolved relative to `$HOME`. Absolute paths used as-is.
 
-For global and preset `paths.allow_ro`, `paths.allow_rw`, `paths.deny_read`, and `paths.deny_write`, relative paths resolve from `$HOME`; trusted project paths resolve from its discovered root. CLI grant paths resolve from the effective workspace after `--worktree`; `~` resolves from `$HOME`. Explicit grants must exist and are canonicalized before sandbox setup. Unknown or legacy JSON fields are errors.
+For global, preset, bundled-profile, and user-profile `paths.allow_ro`, `paths.allow_rw`, `paths.deny_read`, and `paths.deny_write`, relative paths resolve from `$HOME`; declarations directly in trusted project config resolve from its discovered root even when it imports a user profile. CLI grant paths resolve from the effective workspace after `--worktree`; `~` resolves from `$HOME`. Explicit grants must exist and are canonicalized before sandbox setup. `_warning` is the sole optional string metadata field ignored during merging; unknown or legacy JSON fields are errors.
 
 Resolution happens exactly once after application discovery, worktree selection, secret discovery, and staging. Each hard-denial rule records its source, lexical directory entry, then-current canonical target (including a would-be target beneath a symlinked ancestor), existence, and captured file/directory kind. The workspace, grants, and runtime roots also retain captured device/inode identity and kind so adapters select file-versus-directory enforcement without consulting live host state. Every filesystem-policy path must be valid UTF-8 because Seatbelt, VM plans, and launcher protocols are textual; an unrepresentable path fails before child launch rather than being converted lossily. This restriction does not apply to wrapped-command argv bytes. Immediately before adapter dispatch CDM fails if a captured identity changed. Adapters consume the immutable snapshot and enforce its exact spellings; they do not re-run `canonicalize`, `exists`, or `is_dir` during launch.
 

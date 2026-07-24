@@ -160,6 +160,10 @@ ARM64. It downloads the matching runtime, verifies it against the release's
 `SHA256SUMS`, and installs it under `$HOME/.local`. Ensure
 `$HOME/.local/bin` is on `PATH`.
 
+This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in profiles, and
+the structured status tree require 0.1.5 or newer; 0.1.4 predates those
+features. Check with `cdm version` when following documentation from `main`.
+
 Set `CDM_INSTALL_PREFIX` to choose another prefix or `CDM_INSTALL_VERSION` to
 pin a release. See [Getting started](GETTING_STARTED.md) for manual installation,
 version pinning, source builds, and artifact verification, or open the
@@ -217,7 +221,8 @@ CDM keeps editable policy separate from the state written by `cdm setup` and
 |---|---|---|
 | Global user policy and named presets | `~/.cdm/config.json` (or `CDM_CONFIG_PATH`) | You; `cdm config` creates the defaults once |
 | Nearest project policy | `<project>/.cdm/config.json` | The repository; you approve it with `cdm trust` |
-| Enabled built-in profile IDs | `~/.cdm/setup-profiles.json` | `cdm setup` |
+| User-owned reusable profiles | `~/.cdm/profiles/*.json` | You |
+| Bundled profile policy | `~/.cdm/profiles/bundled/{pi,claude,codex,copilot}.json` | `cdm setup`; upgrades may overwrite these files |
 | Approved project-config digests | `~/.cdm/trusted-projects.json` | `cdm trust` |
 
 ### Global and project policy
@@ -249,6 +254,54 @@ the sections it changes. For example:
 
 Global and preset relative paths resolve from `$HOME`. Explicit path targets
 must already exist. Repeat `--preset <name>` to apply named global presets.
+Configuration documents may also import ordered user profiles beneath
+`~/.cdm/profiles/`, for example `"import": ["personal.json", "work.json"]`.
+Imports expand recursively depth-first and merge left-to-right; the importing
+file merges last. Nested names are relative to their importing profile's
+directory. A literal `~/.cdm/profiles/...` name is also accepted. Other
+absolute, escaping, missing, malformed, unknown-field, linked, unsafe-permission,
+or cyclic imports fail before the child starts. Imports from `bundled/` retain
+their `[profile:ID]` provenance, so absent optional tool state remains optional
+when a user base profile composes bundled profiles.
+
+For example, a reusable stack can be expressed with ordinary JSON files:
+
+**`~/.cdm/profiles/my-base.json`**
+
+```json
+{
+  "import": [
+    "bundled/pi.json",
+    "bundled/claude.json",
+    "bundled/codex.json"
+  ],
+  "paths": {
+    "allow_ro": [".pi-lens"]
+  }
+}
+```
+
+**`~/.cdm/profiles/work-base.json`**
+
+```json
+{
+  "import": ["my-base.json"],
+  "paths": {
+    "allow_ro": [".config/work-tool"]
+  }
+}
+```
+
+The project can then merge that host-owned stack before its own settings:
+
+```json
+{
+  "import": ["~/.cdm/profiles/work-base.json"],
+  "paths": {
+    "allow_rw": ["reports"]
+  }
+}
+```
 
 A repository can add narrower, shared policy in its nearest project config:
 
@@ -263,40 +316,35 @@ A repository can add narrower, shared policy in its nearest project config:
 }
 ```
 
-Project-relative paths resolve from the project root, and project configs
-cannot define presets. Review the file, then approve its exact bytes:
+Project-relative paths declared directly in this file resolve from the project
+root. A project may import only user-owned files under `~/.cdm/profiles/`; paths
+from those imports remain `$HOME`-relative. Project configs cannot define
+presets. Review the file, including its ordered import names, then approve its
+exact bytes:
 
 ```bash
 cdm project
 cdm trust
 ```
 
-Any byte change requires `cdm trust` again. Policy precedence is built-in
-defaults, global config, explicitly selected profiles, selected presets,
-trusted project config, then CLI flags.
+Any byte change requires `cdm trust` again. Each document's `import` entries apply
+immediately before that document. Overall precedence is built-in defaults,
+global imports and global config, explicitly selected bundled profiles,
+selected presets, trusted project imports and project config, then CLI flags.
 
-### Guided profile setup
+### Bundled profile setup
 
-Run `cdm setup` in an interactive terminal after installation. It detects Pi,
-Claude Code, OpenAI Codex CLI, and GitHub Copilot CLI from executables and known
-state markers without executing those tools. Use the arrow keys to move, Space
-to toggle, and Enter to save; Escape or `q` cancels without changing the prior
-selection. All detected tools start selected.
+Run `cdm setup` after installation or upgrade. It is non-interactive and
+refreshes all four readable bundled JSON files. Setup never rewrites the global
+config, user-owned profiles, or unknown files in the bundled directory. Each
+managed file contains a valid-JSON `_warning` stating that upgrades may
+overwrite it; extend or override it from a user-owned profile instead of editing
+it.
 
-Setup saves IDs—not profile policy—and never rewrites the global config:
-
-**`~/.cdm/setup-profiles.json`** (CDM-managed excerpt)
-
-```json
-{
-  "version": 1,
-  "enabled_profile_ids": ["claude", "pi"]
-}
-```
-
-The available IDs are `pi`, `claude`, `codex`, and `copilot`. Enabling one only
-makes it available; CDM never infers a profile from the wrapped executable.
-Apply profiles explicitly, repeating `--profile` when they should compose:
+The available IDs are `pi`, `claude`, `codex`, and `copilot`. Every known ID is
+directly usable after materialization; there is no enablement registry or legacy
+profile schema. CDM never infers a profile from the wrapped executable. Apply
+profiles explicitly, repeating `--profile` when they should compose:
 
 ```bash
 cdm --profile pi pi
@@ -305,8 +353,8 @@ cdm --profile codex --profile copilot coding-agent-wrapper
 ```
 
 Built-in profile names and user preset names are independent. Rerun `cdm setup`
-to change the enabled list; clearing every checkbox and pressing Enter disables
-all detected profiles.
+to restore a missing or edited bundled file; invocation fails with that
+instruction rather than falling back to hidden compiled policy.
 
 For completeness, trusting a project updates the other managed state file:
 

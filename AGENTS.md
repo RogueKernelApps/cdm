@@ -18,7 +18,8 @@ Read only the references relevant to the task:
 
 - Use TDD for behavior changes: demonstrate the failing expectation, make the smallest production change, then refactor with tests green.
 - Prefer deep modules with narrow interfaces. Keep typed argument parsing and generated completion in `cli.rs`, top-level dispatch in `main.rs`, invocation orchestration in `invocation.rs`, and do not duplicate access, app-discovery, worktree, proxy, or VM policy there.
-- Resolve filesystem policy once in `access.rs`. Native and VM adapters translate the resolved policy; they do not invent different policy.
+- Resolve filesystem policy once in `access.rs`. Native and VM adapters translate the resolved policy; they do not invent different policy. The configuration `import` array stays beneath the pinned user profile root, applies in document order before the current file, and keeps each declaring-file path anchor.
+- Keep bundled profiles as transparent managed JSON refreshed by non-interactive `cdm setup`. Known IDs are directly selectable; do not add profile detection, enablement registries, migrations, or legacy schema handling.
 - Keep real secret mappings in host memory and out of sandbox-visible files, logs, command lines, and errors.
 - Preserve argv boundaries. Shell syntax requires the caller to request a shell explicitly.
 - Surface malformed input, setup failures, and incomplete cleanup. Do not turn failures into warnings or success-shaped results.
@@ -29,6 +30,13 @@ Read only the references relevant to the task:
 ## Documentation contract
 
 Documentation is part of every behavior change. Update the user guide, architecture, specification, tests guide, and scoped instructions when their contract changes. Keep historical documents clearly labelled as superseded.
+
+Advance the product version immediately after a release before merging new
+user-visible behavior or documenting it on `main`. Keep Cargo, the lockfile,
+`src/main.rs`, `specs/SPEC.md`, and versioned install/packaging examples aligned.
+Every documented built-in must have exact-artifact dispatch coverage, and the
+release workflow must rerun that coverage against the installed prefix before
+publication.
 
 Run the documentation validator after changing docs, CLI flags, versions, test layout, or agent instructions:
 
