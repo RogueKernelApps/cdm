@@ -31,22 +31,45 @@ version pinning, source builds, and artifact verification, or open the
 
 ## Try the filesystem sandbox
 
-Make a workspace and a file next to it:
+Create a small example with one project folder and one folder outside it:
 
 ```console
 $ mkdir -p ~/cdm-demo/workspace ~/cdm-demo/outside
+$ printf 'project file\n' > ~/cdm-demo/workspace/project.txt
 $ printf 'original\n' > ~/cdm-demo/outside/note.txt
 $ cd ~/cdm-demo/workspace
 ```
 
-A plain CDM command can read the file outside the workspace:
+The examples below all use this layout:
+
+```text
+~/cdm-demo/
+├── workspace/              ← project folder; commands start here
+│   └── project.txt
+└── outside/                ← host data outside the project
+    └── note.txt
+```
+
+### Plain CDM: write here, read elsewhere
+
+With plain `cdm`, the same tree looks like this to the command:
+
+```text
+~/cdm-demo/
+├── workspace/              [read/write]
+│   └── project.txt
+└── outside/                [read-only]
+    └── note.txt
+```
+
+The command can therefore read `note.txt`:
 
 ```console
 $ cdm -q cat ../outside/note.txt
 original
 ```
 
-It can also create and change files inside the workspace:
+It can also create and change files inside `workspace`:
 
 ```console
 $ cdm -q sh -c 'printf "created by CDM\n" > result.txt'
@@ -54,7 +77,18 @@ $ cat result.txt
 created by CDM
 ```
 
-But it cannot write to the file outside the workspace:
+The project tree now contains the new file:
+
+```text
+~/cdm-demo/
+├── workspace/              [read/write]
+│   ├── project.txt
+│   └── result.txt          ← created by the sandboxed command
+└── outside/                [read-only]
+    └── note.txt            ← still contains "original"
+```
+
+An attempt to overwrite `outside/note.txt` is blocked:
 
 ```console
 $ cdm -q sh -c 'printf "changed\n" > ../outside/note.txt'
@@ -63,9 +97,22 @@ $ cat ../outside/note.txt
 original
 ```
 
-The exact denial text varies by platform, but the command exits nonzero and the
-host file stays unchanged. If the command genuinely needs to update that path,
-grant only that path with `-w`:
+The exact denial text varies by platform, but the command exits nonzero and
+`note.txt` stays unchanged.
+
+### Grant another writable folder
+
+If the command genuinely needs to update `outside`, grant only that folder with
+`-w`:
+
+```text
+~/cdm-demo/
+├── workspace/              [read/write]
+│   ├── project.txt
+│   └── result.txt
+└── outside/                [read/write via -w]
+    └── note.txt
+```
 
 ```console
 $ cdm -q -w ../outside sh -c 'printf "changed\n" > ../outside/note.txt'
@@ -73,18 +120,41 @@ $ cat ../outside/note.txt
 changed
 ```
 
-Use `--iso` when the command should not read other host user data. Add `-r` for
-a narrow read-only exception:
+### Hide other host user data
+
+Use `--iso` when the command should not read other host user data:
+
+```text
+~/cdm-demo/
+├── workspace/              [read/write]
+│   ├── project.txt
+│   └── result.txt
+└── outside/                [hidden; contents not visible]
+```
 
 ```console
 $ cdm -q --iso cat ../outside/note.txt
 cat: ../outside/note.txt: Operation not permitted
+```
+
+Add `-r` to reveal just that folder as read-only:
+
+```text
+~/cdm-demo/
+├── workspace/              [read/write]
+│   ├── project.txt
+│   └── result.txt
+└── outside/                [read-only via -r]
+    └── note.txt
+```
+
+```console
 $ cdm -q --iso -r ../outside cat ../outside/note.txt
 changed
 ```
 
-That is the basic CDM model: the current workspace is writable, other host data
-is read-only, and `--iso`, `-r`, and `-w` let you make the boundary explicit.
+That is the basic CDM model: the project is writable, visible host user data is
+read-only, and `--iso`, `-r`, and `-w` let you make the boundary explicit.
 
 ## Run developer commands
 
