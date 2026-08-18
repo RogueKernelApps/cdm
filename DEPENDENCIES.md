@@ -1,12 +1,13 @@
 # Dependency modernization
 
-Dependencies were reviewed against their latest stable crates.io releases on 16 July 2026. `rust/Cargo.lock` is committed so application builds resolve the reviewed graph. The crate declares Rust 1.88 as its minimum supported version. Pre-release major versions, including `libc` 1.0 alphas, are intentionally excluded from “latest stable.”
+Dependencies were reviewed against their latest stable crates.io releases on 16 July 2026. The transitive `event-listener` dependency was refreshed on 18 August 2026 for RUSTSEC-2026-0221. `rust/Cargo.lock` is committed so application builds resolve the reviewed graph. The crate declares Rust 1.88 as its minimum supported version. Pre-release major versions, including `libc` 1.0 alphas, are intentionally excluded from “latest stable.”
 
 | Dependency | Selected version | Relevant update |
 |---|---:|---|
 | `aho-corasick` | 1.1.4 | Bounded overlapping literal matching while streaming macOS bundle references |
 | `clap` / `clap_complete` | 4.6.x | One typed parser generates validation, help, and Bash/Zsh/Fish completion without duplicating the flag contract |
 | `dialoguer` | 0.12.0 | Terminal-native multi-select interaction for the detected-app setup checklist; default features stay disabled |
+| `event-listener` | 5.4.2 | Transitive async notification support through Moka/Hudsucker; 5.4.2 fixes RUSTSEC-2026-0221 |
 | `libc` | 0.2.186 | Current platform constants and bindings |
 | `serde` | 1.0.228 | Current derive and serialization fixes |
 | `serde_json` | 1.0.150 | Current JSON parser/serializer fixes |
