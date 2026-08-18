@@ -239,6 +239,7 @@ PY
     PROFILE_PERSONAL_STATE="$PROFILE_ROOT/personal-state"
     PROFILE_WORK_STATE="$PROFILE_ROOT/work-state"
     mkdir -p "$PROFILE_HOME/.cdm" "$PROFILE_HOME/.pi/agent/sessions" \
+        "$PROFILE_HOME/.agents/skills" \
         "$PROFILE_PROJECT" "$PROFILE_PRESET_STATE" "$PROFILE_PERSONAL_STATE" "$PROFILE_WORK_STATE"
     chmod 700 "$PROFILE_HOME/.cdm"
     PROFILE_SETUP_BIN="$PROFILE_ROOT/detected-bin"
@@ -250,6 +251,7 @@ PY
     HOME="$PROFILE_HOME" PATH="$PROFILE_SETUP_BIN" \
         "$PYTHON_BIN" "$SCRIPT_DIR/setup_pty.py" "$CDM" "0d" >/dev/null
     printf 'profile instructions\n' > "$PROFILE_HOME/.pi/agent/AGENTS.md"
+    printf 'shared instructions\n' > "$PROFILE_HOME/.agents/skills/guarded.txt"
     printf '{"import":["bundled/codex.json"],"paths":{"allow_rw":["%s"]}}\n' "$PROFILE_PERSONAL_STATE" \
         > "$PROFILE_HOME/.cdm/profiles/personal.json"
     printf '{"import":["personal.json"],"paths":{"allow_rw":["%s"]}}\n' \
@@ -299,10 +301,20 @@ PY
         CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
         "$CDM" --profile pi --no-proxy sh -c \
         "printf tampered > '$PROFILE_HOME/.pi/agent/AGENTS.md'") >/dev/null 2>&1; then
-        printf "  ${RED}FAIL${NC} config: profile read-only customization was writable\n"; FAIL=$((FAIL + 1))
+        check_eq "config: harness-owned state stays writable" \
+            "$(cat "$PROFILE_HOME/.pi/agent/AGENTS.md")" "tampered"
     else
-        check_eq "config: profile customization stays read-only" \
-            "$(cat "$PROFILE_HOME/.pi/agent/AGENTS.md")" "profile instructions"
+        printf "  ${RED}FAIL${NC} config: harness-owned state was not writable\n"; FAIL=$((FAIL + 1))
+    fi
+
+    if (cd "$PROFILE_PROJECT" && HOME="$PROFILE_HOME" \
+        CDM_CONFIG_PATH="$PROFILE_HOME/.cdm/config.json" \
+        "$CDM" --profile pi --no-proxy sh -c \
+        "printf tampered > '$PROFILE_HOME/.agents/skills/guarded.txt'") >/dev/null 2>&1; then
+        printf "  ${RED}FAIL${NC} config: shared customization root was writable\n"; FAIL=$((FAIL + 1))
+    else
+        check_eq "config: shared customization root stays read-only" \
+            "$(cat "$PROFILE_HOME/.agents/skills/guarded.txt")" "shared instructions"
     fi
     remove_test_path "$PROFILE_ROOT"
 else
