@@ -253,13 +253,15 @@ runner user access to `/dev/kvm`, so it accepts the exact package in place.
 GitHub-hosted Linux AArch64 does not expose nested KVM. Register one dedicated
 Linux AArch64 acceptance runner with the exact labels `self-hosted`, `Linux`,
 `ARM64`, and `cdm-release`. It needs a trusted `/usr/bin/bwrap`, `patchelf`,
-Python 3.11 or newer, read/write `/dev/kvm`, and enough temporary space to
-download and unpack one candidate. The hosted runner still performs the expensive
-build. GitHub stores that output as an immutable candidate artifact; the AArch64
-runner verifies its checksums, unpacks and accepts the exact package, and a hosted
-finalizer downloads that same candidate for Sigstore attestation and release
-upload. A failed or unavailable acceptance runner therefore cannot produce a
-publishable Linux AArch64 artifact.
+Python 3.11 or newer, `/dev/kvm`, passwordless `sudo` for narrowing that device
+node to the release-runner UID/GID at mode `0600`, and enough temporary space to
+download and unpack one candidate. The acceptance job performs that ownership
+setup and proves read/write access before launching CDM. The hosted runner still
+performs the expensive build. GitHub stores that output as an immutable candidate
+artifact; the AArch64 runner verifies its checksums, unpacks and accepts the exact
+package, and a hosted finalizer downloads that same candidate for Sigstore
+attestation and release upload. A failed or unavailable acceptance runner
+therefore cannot produce a publishable Linux AArch64 artifact.
 
 GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
 to boot CDM's libkrun package. Register one Apple-silicon runner with the exact

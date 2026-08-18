@@ -8,6 +8,7 @@ Read the repository-root and `rust/AGENTS.md` instructions first. `README.md` in
 - Sign macOS libraries before the CDM executable and retain the Hypervisor entitlement. Ad-hoc signing is only for local validation.
 - A runtime containing libkrunfw must be accompanied by the exact corresponding-source archive and notices. Never describe `runtime` output alone as redistributable.
 - Keep target claims limited to paths actually implemented and validated. Do not claim universal macOS or cross-architecture packages.
+- Before either Linux target-native VM acceptance path runs, assign `/dev/kvm` to that job's runner UID/GID at mode `0600` and prove read/write access; never bypass the VM journey because a persistent runner lost device permissions.
 - Start release compilation from fresh extracted runtime sources and a fresh Cargo target directory. Reuse only checksum-verified downloads.
 - Keep `verify-runtime.py` fail-closed for transitive bundled dependencies, loader paths, macOS entitlements, and relocated execution without loader override variables. `package.sh verify-runtime` validates a deliberately non-redistributable local runtime; `package.sh verify` additionally requires the complete source-derived legal payload.
 - Reject release candidates whose version still matches the previous release after post-release development. Before uninstalling a target-native test prefix, run `tests/integration.sh 18_builtin_commands` with `CDM` pointing to that installed binary.

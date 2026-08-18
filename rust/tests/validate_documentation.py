@@ -376,6 +376,7 @@ def main() -> int:
         'Install Linux release build dependencies',
         '            bubblewrap \\',
         'Enable hosted x86_64 KVM acceptance',
+        'Enable Linux AArch64 KVM acceptance',
         'Upload compact Linux AArch64 runtime candidate',
         'Attest accepted Linux AArch64 outputs',
         'targets: ${{ matrix.guest_target }}',
