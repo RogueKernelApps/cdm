@@ -24,7 +24,7 @@ The installer selects `macos-arm64`, `linux-x86_64`, or `linux-arm64`, verifies
 the runtime with the release's `SHA256SUMS`, and delegates to the package's
 transactional installer. It defaults to `$HOME/.local`:
 
-This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in profiles, and
+This checkout documents CDM 0.1.6. Bundled-profile `cdm setup`, built-in profiles, and
 the structured status tree require 0.1.5 or newer; 0.1.4 predates those
 features. Run `cdm version` after installation when reading documentation from
 `main`.
@@ -36,7 +36,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   | CDM_INSTALL_PREFIX="$HOME/tools" bash
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh \
-  | CDM_INSTALL_VERSION=v0.1.5 bash
+  | CDM_INSTALL_VERSION=v0.1.6 bash
 ```
 
 For a manual installation, download the one `cdm-<version>-<os>-<arch>.tar.gz`

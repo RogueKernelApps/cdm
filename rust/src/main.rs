@@ -29,7 +29,7 @@ mod status;
 mod trusted_exec;
 mod worktree;
 
-const VERSION: &str = "0.1.5";
+const VERSION: &str = "0.1.6";
 
 fn main() {
     let exit_code = run();

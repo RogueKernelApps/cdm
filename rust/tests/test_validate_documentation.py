@@ -27,22 +27,22 @@ class DevelopmentVersionTests(unittest.TestCase):
         with patch.object(
             validator.subprocess,
             "run",
-            side_effect=[result(0, "v0.1.3\nv0.1.4\n"), exact],
+            side_effect=[result(0, "v0.1.4\nv0.1.5\n"), exact],
         ):
             errors: list[str] = []
             validator.check_development_version(version, errors)
             return errors
 
     def test_untagged_development_must_advance_past_highest_release(self) -> None:
-        self.assertTrue(self.check_version("0.1.3"))
         self.assertTrue(self.check_version("0.1.4"))
-        self.assertFalse(self.check_version("0.1.5"))
+        self.assertTrue(self.check_version("0.1.5"))
+        self.assertFalse(self.check_version("0.1.6"))
 
     def test_only_exact_highest_release_tag_may_equal_released_version(self) -> None:
-        self.assertFalse(self.check_version("0.1.4", "v0.1.4"))
-        self.assertTrue(self.check_version("0.1.3", "v0.1.4"))
-        self.assertTrue(self.check_version("0.1.5", "v0.1.4"))
-        self.assertTrue(self.check_version("0.1.3", "v0.1.3"))
+        self.assertFalse(self.check_version("0.1.5", "v0.1.5"))
+        self.assertTrue(self.check_version("0.1.4", "v0.1.5"))
+        self.assertTrue(self.check_version("0.1.6", "v0.1.5"))
+        self.assertTrue(self.check_version("0.1.4", "v0.1.4"))
 
 
 class ProfileContractTests(unittest.TestCase):
