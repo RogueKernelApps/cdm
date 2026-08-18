@@ -188,22 +188,26 @@ cdm --profile claude --preset team-policy claude
 cdm --profile codex --profile copilot coding-agent-wrapper
 ```
 
-CDM never selects a profile from the wrapped command itself. At resolution time,
-a profile's existing customization root is read-only while its existing mutable
-authentication, settings, trust, session/history, cache/log, package/plugin, and
-database paths are read/write. Absent optional state paths are skipped rather
-than broadening access or failing the invocation. The initial catalog covers:
+CDM never selects a profile from the wrapped command itself. Bundled profiles
+prioritize compatibility with independently updated harnesses by granting broad
+read/write access to their owned state roots:
 
-- `pi`: `~/.pi/agent` and shared `~/.agents/skills`, with Pi auth, settings,
-  trust, sessions, package stores, model state, and logs mutable.
-- `claude`: `~/.claude` customizations read-only, with `~/.claude.json` plus
-  Claude settings, projects, sessions, plans, history, cache, telemetry, and
-  generated state mutable.
-- `codex`: `~/.codex` customizations read-only, with Codex auth, history,
-  sessions, logs, cache, and local state databases mutable.
-- `copilot`: `~/.copilot` customizations read-only, with Copilot settings,
-  auth/application state, permissions, sessions, logs, plugins, MCP fallback
-  state, databases, and platform cache paths mutable.
+- `pi`: `~/.pi` is read/write.
+- `claude`: `~/.claude` and `~/.claude.json` are read/write.
+- `codex`: `~/.codex` is read/write.
+- `copilot`: `~/.copilot`, `~/.cache/copilot`, and
+  `~/Library/Caches/copilot` are read/write when present.
+
+Every bundled profile also grants read-only access to the shared `~/.agents`
+customization directory used for portable skills and agent definitions.
+
+This permits new lock files, databases, caches, atomic temporary files, and
+other internal state without requiring a CDM release for every harness change.
+It also means every CDM invocation receives the broad grants from every profile
+selected by setup; the startup tree reports them explicitly. Deselect a bundled
+profile and import a narrower user-owned profile when protecting harness
+customizations is more important than compatibility. Missing optional built-in
+profile paths are skipped rather than causing a failure.
 
 ## Configuration and caches
 

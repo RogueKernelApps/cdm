@@ -19,89 +19,38 @@ ARM64. It downloads the matching runtime, verifies it against the release's
 `SHA256SUMS`, and installs it under `$HOME/.local`. Ensure
 `$HOME/.local/bin` is on `PATH`.
 
-This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in
-profiles, and the structured status tree require 0.1.5 or newer; 0.1.4 predates
-those features. Check with `cdm version` when following documentation from
-`main`.
-
-Set `CDM_INSTALL_PREFIX` to choose another prefix or `CDM_INSTALL_VERSION` to
-pin a release. See [Getting started](GETTING_STARTED.md) for manual installation,
-version pinning, source builds, and artifact verification, or open the
-[latest release](https://github.com/RogueKernelApps/cdm/releases/latest).
+This README describes CDM 0.1.5 or newer. Run `cdm version` if `cdm setup` is
+not recognized. See [Getting started](GETTING_STARTED.md) for custom prefixes,
+version pinning, manual installation, source builds, and artifact verification.
 
 ## Set up CDM
 
-After installing or upgrading, run the interactive setup:
+After installing or upgrading, select the coding harnesses you use:
 
 ```console
 $ cdm setup
 ```
 
-CDM detects known coding harnesses without launching them and shows an
-all-selected toggle menu. Keep the tools you use and press Enter. If you select
-Pi and Codex, for example, CDM creates this transparent configuration:
+CDM detects Pi, Claude Code, Codex, and Copilot without launching them. Keep the
+tools you use selected and press Enter. Their compatibility profiles apply
+automatically, and CDM shows every resulting permission when a command starts.
+The profiles grant broad write access to harness-owned state; see
+[Configuration](#configuration) for narrower alternatives.
 
-```text
-~/.cdm/
-├── base.json                     ← imports the selected profiles
-└── profiles/
-    └── bundled/
-        ├── pi.json               ← Pi filesystem policy
-        └── codex.json            ← Codex filesystem policy
-```
+## Run a command
 
-Only selected known bundled profiles are written. Running `cdm setup` again
-refreshes that selection without touching user-owned profiles. The files explain
-what they grant; extend them from your own profile rather than editing bundled
-files that a later setup may replace.
-
-You do not need a global config to run commands. Create one when you want your
-own defaults or named presets:
+Put `cdm` before the command you already use:
 
 ```bash
-cdm config
+cd ~/my_dev_project/
+
+cdm pi
+cdm codex
+cdm npm test
 ```
 
-`cdm config` is create-only: it never overwrites an existing file.
-
-### Approve project configuration
-
-A repository can provide its own policy in `.cdm/config.json`:
-
-```text
-your-project/
-├── .cdm/
-│   └── config.json               ← repository-provided policy
-├── src/
-└── README.md
-```
-
-CDM will not silently trust that file. Inspect the detected project and config,
-review the file, then approve its exact bytes:
-
-```console
-$ cdm project
-$ cat .cdm/config.json
-$ cdm trust
-```
-
-Any edit to the project config requires `cdm trust` again.
-
-### Built-in commands
-
-| Command | What it does |
-|---|---|
-| `cdm setup` | Select detected coding harnesses and refresh their bundled profiles. |
-| `cdm config` | Create the editable global config if it does not exist. |
-| `cdm project` | Report the discovered project root, kind, and project-config path without trusting it. |
-| `cdm trust` | Approve the exact current bytes of the nearest project config. |
-| `cdm help` | Show commands and sandbox flags. |
-| `cdm version` | Print the installed CDM version. |
-| `cdm completions bash` | Generate completion source; `zsh` and `fish` are also supported. |
-| `cdm run npm test` | Explicit form of `cdm npm test`; both preserve the wrapped arguments. |
-
-These commands manage or inspect CDM itself. To sandbox a developer command,
-put `cdm` in front of it—or use the explicit `cdm run ...` form.
+The command and its arguments pass through unchanged. Use an explicit shell for
+shell syntax, for example `cdm sh -c 'npm test | tee test.log'`.
 
 ## Try the filesystem sandbox
 
@@ -230,26 +179,7 @@ changed
 That is the basic CDM model: the project is writable, visible host user data is
 read-only, and `--iso`, `-r`, and `-w` let you make the boundary explicit.
 
-## Run developer commands
-
-Put `cdm` before the command you already use:
-
-```bash
-cd ~/my_dev_project/
-
-cdm npm test
-cdm python3 ./project_acme/audit.py
-cdm pi
-cdm claude
-cdm copilot --allow-all
-```
-
-The wrapped command keeps its original argument boundaries. In the last
-example, `--allow-all` is passed to Copilot—not interpreted by CDM. Shell syntax
-also stays explicit: use `sh -c` when you want a shell to process redirects,
-pipes, or variable expansion.
-
-### Add only the controls you need
+## Add only the controls you need
 
 | Command | Outcome |
 |---|---|
@@ -358,6 +288,25 @@ sandbox. See [Getting started](GETTING_STARTED.md) for its full lifecycle and
 edge cases.
 
 ## Configuration
+
+### Management commands
+
+| Command | What it does |
+|---|---|
+| `cdm setup` | Select detected coding harnesses and refresh their bundled profiles. |
+| `cdm config` | Create the editable global config if it does not exist. |
+| `cdm project` | Report the discovered project root, kind, and project-config path without trusting it. |
+| `cdm trust` | Approve the exact current bytes of the nearest project config. |
+| `cdm help` | Show commands and sandbox flags. |
+| `cdm version` | Print the installed CDM version. |
+| `cdm completions bash` | Generate completion source; `zsh` and `fish` are also supported. |
+| `cdm run npm test` | Explicit form of `cdm npm test`; both preserve the wrapped arguments. |
+
+These commands manage or inspect CDM itself. You do not need a global config to
+run commands. `cdm config` creates one only when you want custom defaults or
+named presets, and it never overwrites an existing file.
+
+### Configuration files
 
 CDM keeps editable policy separate from the state written by `cdm setup` and
 `cdm trust`:
@@ -516,6 +465,16 @@ There is no opaque enablement registry, migration path, or accepted legacy
 schema. CDM never infers policy from the wrapped executable. If a selected
 bundled file is missing, invocation fails with an instruction to rerun
 `cdm setup` rather than falling back to hidden compiled policy.
+
+Bundled profiles deliberately grant broad read/write access to each selected
+harness's owned state: `~/.pi`, `~/.claude` plus `~/.claude.json`,
+`~/.codex`, and `~/.copilot` plus its platform cache locations. This avoids
+depending on unstable internal filenames or write protocols such as adjacent
+lock directories and atomic temporary files. Because setup-selected profiles
+apply to every CDM invocation, use a narrower user-owned profile instead when
+protecting harness customizations is more important than compatibility. The
+shared `~/.agents` customization directory remains read-only for every bundled
+profile.
 
 For completeness, trusting a project updates the other managed state file:
 

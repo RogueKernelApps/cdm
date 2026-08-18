@@ -125,6 +125,15 @@ guidance; the compiled catalog is never a runtime fallback. There is no opaque
 enablement registry, migration, or accepted legacy profile schema. Explicit
 `--profile` and preset namespaces remain independent.
 
+Bundled profiles are compatibility-first capabilities. Each selected profile
+grants its harness-owned state root read/write (`~/.pi`, `~/.claude` plus
+`~/.claude.json`, `~/.codex`, or `~/.copilot` plus its cache roots) rather than
+enumerating unstable internal files. This permits harness-created lock,
+temporary, database, cache, and future state paths. Setup-selected imports apply
+to every invocation and remain visible with `[profile:ID]` provenance; users who
+need narrower integrity boundaries supply their own profile instead. Pi's shared
+`~/.agents` customization root remains read-only in every bundled profile.
+
 The effective workspace is read/write by default and read-only under `--ro`. Host access is normal by default—readable but not writable outside explicit writable roots—and allowlisted under `--iso`. `--iso --ro` therefore isolates host data and makes the workspace read-only. Independently, CDM creates a unique mode-0700 session beneath an invoking-user-owned private runtime root and overrides `TMPDIR`, `TMP`, and `TEMP` for every child. When requested, staged secret files and proxy material join VM plans and monitor logs beneath this session rather than becoming independent raw-temp artifacts. Adapters expose the session as one resolved runtime capability, so `--iso` can consume exact staged files without granting their host originals.
 
 Monitor mode creates its log with exclusive, no-symlink, mode-0600 semantics. Viewer paths are passed as argv; macOS AppleScript receives the path as an argument and applies `quoted form` rather than embedding it in source. Host helpers and terminal viewers are fixed, validated absolute executables and receive only a small GUI/session environment allowlist rather than the wrapped command's `PATH`, loader variables, or broader environment. Launcher, denial-stream, and viewer children are explicitly reaped or closed before runtime cleanup. Because `--monitor` is an explicit request, any setup failure aborts before untrusted execution rather than degrading to a warning.

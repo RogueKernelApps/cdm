@@ -92,6 +92,27 @@ notarization rather than stapling.
 
 macOS release builders need Rust, a C toolchain, `pkg-config`, `xz`, LLVM/libclang, `ld.lld`, and the matching `aarch64-unknown-linux-musl` Rust target used for the static guest init. The script uses `llvm-config`/`ld.lld` from `PATH`, with Homebrew discovery only as a release-builder convenience. End users do not need Homebrew.
 
+On a Homebrew-based Apple-silicon development machine, first install Rust with
+the official [`rustup` installer](https://rustup.rs/) if `rustup` is not already
+available, then install the remaining package-builder prerequisites before
+running `package.sh`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+xcode-select --install                     # if Command Line Tools are absent
+brew install pkg-config xz llvm lld
+rustup target add aarch64-unknown-linux-musl
+```
+
+The Rust installer selects the current stable toolchain; CDM requires Rust 1.88
+or newer. Follow the installer's prompts rather than rerunning it when `rustup`
+is already present.
+
+Homebrew packages LLVM and LLD separately, so installing `llvm` alone may still
+leave `ld.lld` unavailable. `package.sh runtime` checks for it and fails before
+building the runtime package if it is missing.
+
 Linux release builders need Rust, a C toolchain, `pkg-config`, and `patchelf`. Build on the oldest glibc baseline the release intends to support.
 
 ## Layout and signing

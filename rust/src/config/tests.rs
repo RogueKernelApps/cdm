@@ -628,7 +628,7 @@ fn trust_store_keys_reject_non_utf8_paths() {
 }
 
 #[test]
-fn built_in_profile_catalog_is_stable_and_splits_read_only_from_mutable_state() {
+fn built_in_profile_catalog_grants_broad_harness_owned_state() {
     let profiles = built_in_profiles();
     assert_eq!(
         profiles
@@ -638,17 +638,20 @@ fn built_in_profile_catalog_is_stable_and_splits_read_only_from_mutable_state() 
         ["pi", "claude", "codex", "copilot"]
     );
     for profile in profiles {
-        assert!(
-            !profile.allow_ro.is_empty(),
-            "{} needs read-only inputs",
-            profile.id
-        );
-        assert!(
-            !profile.allow_rw.is_empty(),
-            "{} needs mutable state",
+        assert_eq!(
+            profile.allow_ro,
+            [".agents"],
+            "{} shared inputs",
             profile.id
         );
     }
+    assert_eq!(profiles[0].allow_rw, [".pi"]);
+    assert_eq!(profiles[1].allow_rw, [".claude", ".claude.json"]);
+    assert_eq!(profiles[2].allow_rw, [".codex"]);
+    assert_eq!(
+        profiles[3].allow_rw,
+        [".copilot", ".cache/copilot", "Library/Caches/copilot"]
+    );
 }
 
 #[test]
@@ -693,26 +696,26 @@ fn explicit_profiles_apply_before_presets_and_project_with_distinct_origins() {
         &trust_path,
     )
     .unwrap();
-    assert!(loaded.paths.allow_ro.iter().any(|path| {
+    assert!(loaded.paths.allow_rw.iter().any(|path| {
         path.value == ".claude"
             && path.relative_to == home
             && path.origin == Origin::Profile("claude".into())
     }));
     let claude_position = loaded
         .paths
-        .allow_ro
+        .allow_rw
         .iter()
         .position(|path| path.origin == Origin::Profile("claude".into()))
         .unwrap();
     let pi_position = loaded
         .paths
-        .allow_ro
+        .allow_rw
         .iter()
         .position(|path| path.origin == Origin::Profile("pi".into()))
         .unwrap();
     assert!(claude_position < pi_position);
-    assert!(loaded.paths.allow_ro.iter().any(|path| {
-        path.value == ".pi/agent"
+    assert!(loaded.paths.allow_rw.iter().any(|path| {
+        path.value == ".pi"
             && path.relative_to == home
             && path.origin == Origin::Profile("pi".into())
     }));
@@ -737,9 +740,9 @@ fn explicit_profiles_apply_before_presets_and_project_with_distinct_origins() {
     .unwrap();
     assert!(codex
         .paths
-        .allow_ro
+        .allow_rw
         .iter()
-        .any(|path| path.origin == Origin::Profile("codex".into())));
+        .any(|path| { path.value == ".codex" && path.origin == Origin::Profile("codex".into()) }));
     let _ = std::fs::remove_dir_all(temp);
 }
 
@@ -890,9 +893,9 @@ fn imported_bundled_profile_retains_profile_origin() {
 
     assert!(loaded
         .paths
-        .allow_ro
+        .allow_rw
         .iter()
-        .any(|path| path.value == ".pi/agent" && path.origin == Origin::Profile("pi".into())));
+        .any(|path| path.value == ".pi" && path.origin == Origin::Profile("pi".into())));
     assert!(loaded
         .paths
         .allow_rw
@@ -948,9 +951,9 @@ fn trusted_project_imports_user_profiles_but_keeps_direct_paths_project_relative
     }));
     assert!(loaded
         .paths
-        .allow_ro
+        .allow_rw
         .iter()
-        .any(|path| path.value == ".pi/agent" && path.origin == Origin::Profile("pi".into())));
+        .any(|path| path.value == ".pi" && path.origin == Origin::Profile("pi".into())));
     let _ = std::fs::remove_dir_all(temp);
 }
 

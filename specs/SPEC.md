@@ -78,12 +78,18 @@ missing selected file or profile directory fails with an instruction to run
 `cdm setup`. `--profile` remains directly usable as an additional explicit
 selection. A wrapped executable never implies a profile.
 
-Bundled profiles divide existing per-tool state into read-only customization
-roots and narrower read/write authentication, settings, trust, session/history,
-cache/log, package/plugin, and database paths. Missing optional built-in profile
-paths are omitted rather than causing a failure or widening access; missing
-explicit configuration and CLI grants remain errors. Profile-contributed paths
-retain terminal-safe `[profile:ID]` provenance.
+Bundled profiles prioritize compatibility by granting broad read/write access to
+each selected harness's owned state roots: `~/.pi`, `~/.claude` plus
+`~/.claude.json`, `~/.codex`, and `~/.copilot` plus `~/.cache/copilot` and
+`~/Library/Caches/copilot`. Every bundled profile grants read-only access to the
+shared `~/.agents` customization root.
+This policy permits harness-created lock directories, atomic temporary files,
+databases, caches, and future internal state without enumerating their names.
+Setup-selected profiles apply to every invocation, retain terminal-safe
+`[profile:ID]` provenance, and are reported in the startup tree. Users may
+deselect them and import narrower user-owned profiles. Missing optional built-in
+profile paths are omitted rather than causing a failure; missing explicit
+configuration and CLI grants remain errors.
 
 The project config is loaded only when its exact bytes match `~/.cdm/trusted-projects.json`. The trust store must be owned by the current user, mode 0600, and updated by create-and-rename from a mode-0600 temporary file. Policy reads use one `O_NOFOLLOW` descriptor for regular-file metadata, bytes, hashing, and parsing; files with multiple hard links are rejected. Any project-config byte edit invalidates trust. Its trusted bytes bind ordered import names, but those names may resolve only to host-owned policy under the pinned `~/.cdm/profiles/` root; project-local imports are unsupported. Imported files are current-user-owned, non-group/world-writable, regular, single-link files opened descriptor-relatively beneath real, user-owned, non-group/world-writable profile directories without following symlink roots, ancestors, or leaves. Every loaded file and containing directory is write-denied inside the child, as are global config, trust store, project config, and their dedicated policy directories, so explicit grants cannot replace them or rename/swap their parents. A custom global config parent must already be a real directory owned by the invoking UID with no group/world write bits. Direct placement beneath `/`, `/tmp`, `/private/tmp`, `$HOME`, the trusted temporary root, or the project root is rejected because CDM cannot safely deny those broad parents in full.
 
