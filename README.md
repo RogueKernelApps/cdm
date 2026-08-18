@@ -29,6 +29,80 @@ pin a release. See [Getting started](GETTING_STARTED.md) for manual installation
 version pinning, source builds, and artifact verification, or open the
 [latest release](https://github.com/RogueKernelApps/cdm/releases/latest).
 
+## Set up CDM
+
+After installing or upgrading, run the interactive setup:
+
+```console
+$ cdm setup
+```
+
+CDM detects known coding harnesses without launching them and shows an
+all-selected toggle menu. Keep the tools you use and press Enter. If you select
+Pi and Codex, for example, CDM creates this transparent configuration:
+
+```text
+~/.cdm/
+├── base.json                     ← imports the selected profiles
+└── profiles/
+    └── bundled/
+        ├── pi.json               ← Pi filesystem policy
+        └── codex.json            ← Codex filesystem policy
+```
+
+Only selected known bundled profiles are written. Running `cdm setup` again
+refreshes that selection without touching user-owned profiles. The files explain
+what they grant; extend them from your own profile rather than editing bundled
+files that a later setup may replace.
+
+You do not need a global config to run commands. Create one when you want your
+own defaults or named presets:
+
+```bash
+cdm config
+```
+
+`cdm config` is create-only: it never overwrites an existing file.
+
+### Approve project configuration
+
+A repository can provide its own policy in `.cdm/config.json`:
+
+```text
+your-project/
+├── .cdm/
+│   └── config.json               ← repository-provided policy
+├── src/
+└── README.md
+```
+
+CDM will not silently trust that file. Inspect the detected project and config,
+review the file, then approve its exact bytes:
+
+```console
+$ cdm project
+$ cat .cdm/config.json
+$ cdm trust
+```
+
+Any edit to the project config requires `cdm trust` again.
+
+### Built-in commands
+
+| Command | What it does |
+|---|---|
+| `cdm setup` | Select detected coding harnesses and refresh their bundled profiles. |
+| `cdm config` | Create the editable global config if it does not exist. |
+| `cdm project` | Report the discovered project root, kind, and project-config path without trusting it. |
+| `cdm trust` | Approve the exact current bytes of the nearest project config. |
+| `cdm help` | Show commands and sandbox flags. |
+| `cdm version` | Print the installed CDM version. |
+| `cdm completions bash` | Generate completion source; `zsh` and `fish` are also supported. |
+| `cdm run npm test` | Explicit form of `cdm npm test`; both preserve the wrapped arguments. |
+
+These commands manage or inspect CDM itself. To sandbox a developer command,
+put `cdm` in front of it—or use the explicit `cdm run ...` form.
+
 ## Try the filesystem sandbox
 
 Create a small example with one project folder and one folder outside it:
