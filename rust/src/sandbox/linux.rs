@@ -6,8 +6,9 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::fd::AsRawFd;
+use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Runs a command in a bubblewrap sandbox on Linux.
 pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
@@ -20,6 +21,11 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
     // Build bwrap arguments — all owned Strings for uniform handling
     let mut args: Vec<String> = Vec::new();
     let access = cfg.resolved_access()?;
+    let host_mount_points = if access.host == crate::access::HostAccess::Normal {
+        read_host_mount_points()?
+    } else {
+        Vec::new()
+    };
     let mut denied_nodes = DeniedNodes::create(&cfg.runtime_dir)?;
     let seccomp = if cfg.network.is_proxied() {
         None
@@ -101,14 +107,21 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
             args.push(arg);
         }
     }
-    if access.host == crate::access::HostAccess::Normal {
-        args.push("--remount-ro".to_string());
-        args.push("/".to_string());
-    }
-
     let mut writable_paths = access.allow_rw.clone();
     if access.workspace == crate::access::WorkspaceAccess::ReadWrite {
         writable_paths.push(access.work_dir.clone());
+    }
+    writable_paths.push(cfg.runtime_dir.clone());
+    if access.host == crate::access::HostAccess::Normal {
+        // Bubblewrap's --remount-ro is intentionally non-recursive. Freeze
+        // every exposed host mount while leaving the nested writable binds
+        // above intact, including workspaces below a separately mounted /opt.
+        append_host_read_only_mounts(
+            &mut args,
+            &host_mount_points,
+            &writable_paths,
+            &synthetic_targets,
+        );
     }
     let mountpoints = append_hard_denials(
         &mut args,
@@ -213,6 +226,113 @@ pub fn run_linux(cfg: SandboxConfig) -> io::Result<SandboxRun> {
         cleanup,
         staged_cleanup: Ok(()),
     })
+}
+
+fn read_host_mount_points() -> io::Result<Vec<PathBuf>> {
+    let mountinfo = fs::read("/proc/self/mountinfo").map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("failed to read the Linux mount table: {error}"),
+        )
+    })?;
+    parse_mountinfo(&mountinfo)
+}
+
+fn parse_mountinfo(mountinfo: &[u8]) -> io::Result<Vec<PathBuf>> {
+    let mut mount_points = BTreeSet::new();
+    for (line_index, line) in mountinfo.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let mount_point = line
+            .split(|byte| *byte == b' ')
+            .filter(|field| !field.is_empty())
+            .nth(4)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "malformed Linux mount table entry on line {}",
+                        line_index + 1
+                    ),
+                )
+            })?;
+        let decoded = decode_mountinfo_path(mount_point, line_index + 1)?;
+        let path = PathBuf::from(OsString::from_vec(decoded));
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Linux mount table entry on line {} is not absolute",
+                    line_index + 1
+                ),
+            ));
+        }
+        mount_points.insert(path);
+    }
+    if !mount_points.contains(Path::new("/")) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Linux mount table does not contain the root mount",
+        ));
+    }
+    Ok(mount_points.into_iter().collect())
+}
+
+fn decode_mountinfo_path(field: &[u8], line_number: usize) -> io::Result<Vec<u8>> {
+    let mut decoded = Vec::with_capacity(field.len());
+    let mut index = 0;
+    while index < field.len() {
+        if field[index] != b'\\' {
+            decoded.push(field[index]);
+            index += 1;
+            continue;
+        }
+        let escape = field.get(index + 1..index + 4).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("malformed Linux mount path escape on line {line_number}"),
+            )
+        })?;
+        if !escape.iter().all(|byte| matches!(byte, b'0'..=b'7')) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("malformed Linux mount path escape on line {line_number}"),
+            ));
+        }
+        let value = u16::from(escape[0] - b'0') * 64
+            + u16::from(escape[1] - b'0') * 8
+            + u16::from(escape[2] - b'0');
+        decoded.push(u8::try_from(value).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("out-of-range Linux mount path escape on line {line_number}"),
+            )
+        })?);
+        index += 4;
+    }
+    Ok(decoded)
+}
+
+fn append_host_read_only_mounts(
+    args: &mut Vec<String>,
+    mount_points: &[PathBuf],
+    writable_roots: &[PathBuf],
+    synthetic_roots: &[PathBuf],
+) {
+    for mount_point in mount_points {
+        let is_writable = writable_roots
+            .iter()
+            .any(|root| mount_point == root || mount_point.starts_with(root));
+        let is_synthetic = synthetic_roots
+            .iter()
+            .any(|root| mount_point == root || mount_point.starts_with(root));
+        if is_writable || is_synthetic {
+            continue;
+        }
+        args.push("--remount-ro".to_string());
+        args.push(mount_point.to_string_lossy().into_owned());
+    }
 }
 
 fn preserve_bwrap_signal_status(

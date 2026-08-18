@@ -330,6 +330,51 @@ fn isolated_mode_does_not_expose_an_unreachable_denial_parent() {
 }
 
 #[test]
+fn normal_mode_remounts_host_submounts_without_closing_writable_or_synthetic_trees() {
+    let mut args = Vec::new();
+    append_host_read_only_mounts(
+        &mut args,
+        &[
+            "/".into(),
+            "/opt".into(),
+            "/opt/work".into(),
+            "/opt/work/nested".into(),
+            "/run".into(),
+            "/run/user/1000".into(),
+            "/var/lib".into(),
+        ],
+        &["/opt/work".into()],
+        &["/run".into()],
+    );
+
+    assert_eq!(
+        args,
+        [
+            "--remount-ro",
+            "/",
+            "--remount-ro",
+            "/opt",
+            "--remount-ro",
+            "/var/lib",
+        ]
+    );
+}
+
+#[test]
+fn mountinfo_parser_decodes_kernel_path_escapes() {
+    let mountinfo = b"36 25 0:32 / / rw,relatime - overlay overlay rw\n\
+                      41 36 8:1 /build\\040root /opt/build\\040root rw - ext4 /dev/vda rw\n";
+
+    assert_eq!(
+        parse_mountinfo(mountinfo).unwrap(),
+        [
+            std::path::PathBuf::from("/"),
+            std::path::PathBuf::from("/opt/build root"),
+        ]
+    );
+}
+
+#[test]
 fn seccomp_program_fd_is_a_bwrap_policy_argument() {
     let mut args = vec!["--cap-drop".to_string(), "ALL".to_string()];
     append_seccomp(&mut args, 17);
