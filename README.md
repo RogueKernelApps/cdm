@@ -2,118 +2,108 @@
 
 > **Give coding agents room to work—without giving them your whole machine.**
 
-CDM runs developer commands inside a host-native sandbox or an optional
-libkrun microVM. Put `cdm` before an ordinary command, then add filesystem,
-network, secret, or Git-worktree isolation when the command needs it.
+CDM puts a sandbox around an ordinary command. By default, the command can read
+host files and write inside the current workspace, but it cannot change files
+elsewhere. Add flags when the command should see less—or when it needs access
+to one more path.
 
-## Start with any command
+## Install
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
+```
+
+The installer supports macOS 14+ on Apple silicon, Linux x86_64, and Linux
+ARM64. It downloads the matching runtime, verifies it against the release's
+`SHA256SUMS`, and installs it under `$HOME/.local`. Ensure
+`$HOME/.local/bin` is on `PATH`.
+
+This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in
+profiles, and the structured status tree require 0.1.5 or newer; 0.1.4 predates
+those features. Check with `cdm version` when following documentation from
+`main`.
+
+Set `CDM_INSTALL_PREFIX` to choose another prefix or `CDM_INSTALL_VERSION` to
+pin a release. See [Getting started](GETTING_STARTED.md) for manual installation,
+version pinning, source builds, and artifact verification, or open the
+[latest release](https://github.com/RogueKernelApps/cdm/releases/latest).
+
+## Try the filesystem sandbox
+
+Make a workspace and a file next to it:
+
+```console
+$ mkdir -p ~/cdm-demo/workspace ~/cdm-demo/outside
+$ printf 'original\n' > ~/cdm-demo/outside/note.txt
+$ cd ~/cdm-demo/workspace
+```
+
+A plain CDM command can read the file outside the workspace:
+
+```console
+$ cdm -q cat ../outside/note.txt
+original
+```
+
+It can also create and change files inside the workspace:
+
+```console
+$ cdm -q sh -c 'printf "created by CDM\n" > result.txt'
+$ cat result.txt
+created by CDM
+```
+
+But it cannot write to the file outside the workspace:
+
+```console
+$ cdm -q sh -c 'printf "changed\n" > ../outside/note.txt'
+sh: ../outside/note.txt: Operation not permitted
+$ cat ../outside/note.txt
+original
+```
+
+The exact denial text varies by platform, but the command exits nonzero and the
+host file stays unchanged. If the command genuinely needs to update that path,
+grant only that path with `-w`:
+
+```console
+$ cdm -q -w ../outside sh -c 'printf "changed\n" > ../outside/note.txt'
+$ cat ../outside/note.txt
+changed
+```
+
+Use `--iso` when the command should not read other host user data. Add `-r` for
+a narrow read-only exception:
+
+```console
+$ cdm -q --iso cat ../outside/note.txt
+cat: ../outside/note.txt: Operation not permitted
+$ cdm -q --iso -r ../outside cat ../outside/note.txt
+changed
+```
+
+That is the basic CDM model: the current workspace is writable, other host data
+is read-only, and `--iso`, `-r`, and `-w` let you make the boundary explicit.
+
+## Run developer commands
+
+Put `cdm` before the command you already use:
 
 ```bash
 cd ~/my_dev_project/
 
-cdm copilot --allow-all
-cdm pi
-cdm claude
-```
-
-The command after `cdm` keeps its original argument boundaries. In the first
-example, `--allow-all` is passed to Copilot—not interpreted by CDM. The same
-pattern works with package managers, test runners, scripts, and other developer
-tools:
-
-```bash
 cdm npm test
 cdm python3 ./project_acme/audit.py
+cdm pi
+cdm claude
+cdm copilot --allow-all
 ```
 
-### Run inside a microVM
-
-```bash
-cdm --vm sh -c 'uname -a'
-cdm --vmi ubuntu:24.04 bash
-```
-
-`--vm` boots CDM's architecture-matched Alpine guest from a roughly 4 MiB
-compressed image embedded in the binary—no image pull, Docker daemon, or VM
-setup required. `--vmi` starts from an OCI image instead. Only the workspace
-and explicit grants are exposed to the guest.
-
-### Let CDM handle the worktree
-
-Start on your normal branch:
-
-```console
-$ cd ~/projects/hello-world
-$ git branch --list
-* main
-```
-
-Then give an agent a disposable worktree:
-
-```console
-$ cdm --worktree claude
-
-cdm
-├─ Sandbox:
-│  └─ Backend:          "seatbelt"   macOS native sandbox
-│                                  flags: `--vm | --vmi IMAGE`            [default]
-├─ File permissions:
-│  ├─ Global:           "ro"         Host readable; writes need a grant
-│  │                               flags: `--iso | -w PATH`               [default]
-│  ├─ Workspace:        "rw"         Project files are writable
-│  │                               flags: `--ro`                          [default]
-│  ├─ Read-only grants:  "none"                                       [default]
-│  └─ Read/write grants: "none"                                       [default]
-├─ Network:
-│  └─ Mode:             "direct"     Unrestricted host network
-│                                  flags: `--no-network | --scramble`     [default]
-├─ Secrets:
-│  └─ Mode:             "unchanged"  Passed through as-is
-│                                  flags: `--scramble | --sec`            [default]
-├─ Security:
-│  └─ Persistence:      "standard"   Normal sandbox protections
-│                                  flags: `--sec`                         [default]
-├─ Worktree:
-│  └─ Mode:             "active"     Save changes to a new branch
-│                                  flags: `--worktree`                    [cli]
-└─ Run:                 "1 arg"      Arguments hidden
-
-> Make a HELLO_WORLD.md file in this folder.
-
-Created HELLO_WORLD.md.
-
-> /quit
-
-cdm done
-├─ Exit:
-│  └─ Status:           "success"    Command exited with code 0
-├─ Worktree:
-│  ├─ Result:           "saved"      Changes preserved on a branch
-│  ├─ Branch:           `CDM__2026-07-22__hello-world__developer`
-│  └─ Changes:          "1 file"     +1 -0
-└─ Next steps:
-   ├─ Inspect:          `git diff bafb04e..CDM__2026-07-22__hello-world__developer`
-   ├─ Merge:            `git merge CDM__2026-07-22__hello-world__developer`
-   ├─ Open PR:          `gh pr create --head CDM__2026-07-22__hello-world__developer`
-   └─ Discard:          `git branch -D CDM__2026-07-22__hello-world__developer`
-```
-
-CDM removes the temporary worktree. Your checkout never moved, and the agent's
-changes are waiting on their own branch:
-
-```console
-$ git branch --list
-  CDM__2026-07-22__hello-world__developer
-* main
-```
-
-**No checkout juggling—and no lost work.** CDM starts from the current
-Git-visible state, and it preserves useful changes even when the agent exits
-nonzero. Generated branch names include the date, project, and user, so yours
-will differ from the example above.
-
-CDM keeps these trees scannable by putting resolved values in speech marks and
-terminal literals—flags, paths, branches, and commands—inside backticks.
+The wrapped command keeps its original argument boundaries. In the last
+example, `--allow-all` is passed to Copilot—not interpreted by CDM. Shell syntax
+also stays explicit: use `sh -c` when you want a shell to process redirects,
+pipes, or variable expansion.
 
 ### Add only the controls you need
 
@@ -137,6 +127,18 @@ cdm --iso \
   tool
 ```
 
+### Run inside a microVM
+
+```bash
+cdm --vm sh -c 'uname -a'
+cdm --vmi ubuntu:24.04 bash
+```
+
+`--vm` boots CDM's architecture-matched Alpine guest from a roughly 4 MiB
+compressed image embedded in the binary—no image pull, Docker daemon, or VM
+setup required. `--vmi` starts from an OCI image instead. Only the workspace
+and explicit grants are exposed to the guest.
+
 ### Sandbox a macOS application
 
 ```bash
@@ -147,27 +149,6 @@ CDM validates the app bundle and infers narrow, app-owned writable locations
 instead of granting broad home-directory access. Selecting the bundle is the
 trust decision: CDM does not run Gatekeeper, notarization, or code-signature
 checks.
-
-## Install
-
-```bash
-curl --proto '=https' --tlsv1.2 -fsSL \
-  https://github.com/RogueKernelApps/cdm/releases/latest/download/cdm-install.sh | bash
-```
-
-The installer supports macOS 14+ on Apple silicon, Linux x86_64, and Linux
-ARM64. It downloads the matching runtime, verifies it against the release's
-`SHA256SUMS`, and installs it under `$HOME/.local`. Ensure
-`$HOME/.local/bin` is on `PATH`.
-
-This checkout documents CDM 0.1.5. Bundled-profile `cdm setup`, built-in profiles, and
-the structured status tree require 0.1.5 or newer; 0.1.4 predates those
-features. Check with `cdm version` when following documentation from `main`.
-
-Set `CDM_INSTALL_PREFIX` to choose another prefix or `CDM_INSTALL_VERSION` to
-pin a release. See [Getting started](GETTING_STARTED.md) for manual installation,
-version pinning, source builds, and artifact verification, or open the
-[latest release](https://github.com/RogueKernelApps/cdm/releases/latest).
 
 ## Security
 
@@ -211,6 +192,26 @@ cdm --scramble \
 restoration and domain filtering. The command preflight is only accident
 prevention; filesystem, network, and VM controls provide the enforceable
 boundaries.
+
+## Optional: keep agent changes on a branch
+
+For longer agent sessions in a Git repository, `--worktree` keeps changes out
+of your current checkout:
+
+```bash
+cdm --worktree claude
+```
+
+CDM creates a temporary worktree from the current Git-visible state, runs the
+command there, and removes the temporary directory afterward. If the command
+changed files, CDM saves them on a generated `CDM__...` branch and prints exact
+commands to inspect, merge, open a pull request, or discard it. Your current
+branch and working tree do not move. Changes are preserved even when the
+wrapped command exits nonzero.
+
+This is optional Git workflow automation, not part of the basic filesystem
+sandbox. See [Getting started](GETTING_STARTED.md) for its full lifecycle and
+edge cases.
 
 ## Configuration
 
