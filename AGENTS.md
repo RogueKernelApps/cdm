@@ -27,6 +27,32 @@ Read only the references relevant to the task:
 - Never weaken unconditional integrity denials, worktree containment, rootfs immutability, or proxy fail-closed behavior merely to make a test pass. Persistence protections are an explicit `--sec` policy surface, not unconditional integrity invariants.
 - Keep machine-specific configuration, plans, review transcripts, generated reports, and historical working notes under the ignored `.scratch/` tree. Do not add harness-specific runtime state to the public repository; checked-in agent guidance belongs in `AGENTS.md` and its scoped descendants.
 
+## Release runners and recovery
+
+Local builds do not require a GitHub Actions runner. For release infrastructure,
+read the [recreation runbook](rust/packaging/README.md#recreate-release-capability-after-deleting-the-old-runner)
+before provisioning or deleting anything. The old `/Users/Shared/cdm-github-runners`
+macOS service directory is disposable after service retirement; do not recreate
+that persistent layout or install a login service. From `rust`, explicitly run
+`./packaging/package.sh runner --repository RogueKernelApps/cdm` to download,
+register, run, and clean up a fresh one-job runner. Use `--github-user` when the
+default `gh` account lacks repository administration access. Do not start a
+runner merely because the project is opened or edited.
+
+A neutral runner `HOME` prevents accidental use of normal home configuration
+and reduces personal paths in public logs; it does not sandbox host access.
+Never describe `/Users/Shared` as a personal-data isolation boundary. macOS and
+Linux ARM64 registrations are separate; a Linux runner may be on another machine
+or in a Linux VM on the same physical machine. Verify the actual service host
+before stopping it, and never infer that deleting the Mac directory retires Linux.
+
+The existing Linux ARM64 acceptance runner is intentionally retained. Do not
+retire it or implement a disposable Linux VM unless that work is explicitly
+requested. The [Linux acceptance findings](rust/packaging/README.md#linux-acceptance-and-possible-future-mac-hosted-execution)
+distinguish GitHub-hosted builds from self-hosted VM tests and describe the
+unimplemented nested-virtualization option. Keep host-specific evidence in
+ignored `.scratch/` notes.
+
 ## Documentation contract
 
 Documentation is part of every behavior change. Update the user guide, architecture, specification, tests guide, and scoped instructions when their contract changes. Keep historical documents clearly labelled as superseded.

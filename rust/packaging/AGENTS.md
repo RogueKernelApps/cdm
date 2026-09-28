@@ -2,7 +2,10 @@
 
 Read the repository-root and `rust/AGENTS.md` instructions first. `README.md` in this directory is the release runbook.
 
-- `package.sh` is the sole public VM-release interface.
+- `package.sh` is the sole public VM-release interface. Its `runner` command owns a foreground, one-job temporary GitHub runner; never install a persistent runner service. Keep administration credentials out of the job environment, bound session lifetime, and report incomplete cleanup. Local packaging must remain independent of GitHub runners.
+- After deleting the old runner directory, follow [Recreate release capability](README.md#recreate-release-capability-after-deleting-the-old-runner). Reprovision through `package.sh runner`, not `svc.sh install` or the old Shared path. Fresh registration credentials are obtained through `gh`; do not back up or restore old runner credential files. Check documented host prerequisites and GitHub signing secrets before a release.
+- A neutral home/path is a configuration and log-privacy measure, not a host sandbox. Verify the service host for each runner registration before retirement; Linux may be in a VM even when the operator is using a Mac.
+- Keep the existing Linux ARM64 acceptance service and build arrangement unchanged until replacement is explicitly requested. Mac cleanup does not authorize Linux migration. `package.sh runner` does not provision a Linux VM; a future Mac-hosted replacement must prove nested KVM and pass exact-artifact acceptance before retiring the existing host. See [Linux acceptance findings](README.md#linux-acceptance-and-possible-future-mac-hosted-execution).
 - Keep upstream versions and SHA-256 values pinned in `versions.env`; never replace verified inputs with floating downloads.
 - Runtime lookup must remain package-relative. Release artifacts must not require Homebrew paths, build-host rpaths, or `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`.
 - Sign macOS libraries before the CDM executable and retain the Hypervisor entitlement. Ad-hoc signing is only for local validation.

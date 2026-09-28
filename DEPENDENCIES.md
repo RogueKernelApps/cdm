@@ -19,10 +19,16 @@ Dependencies were reviewed against their latest stable crates.io releases on 16 
 | `tar` | 0.4.46 | Current archive and extraction fixes; layer errors are propagated and OCI whiteouts are handled by CDM |
 | `flate2` | 1.1.9 | Current gzip decoding fixes |
 | `pkg-config` | 0.3.33 | Current build-time probing; libkrun is probed only for `--features vm` |
-| `libkrun` | 1.19.4 | Latest stable 1.x VM ABI; 2.0 remains explicitly unstable upstream |
-| `libkrunfw` | 5.5.0 | Latest stable firmware bundle; contains Linux 6.12.91 |
+| `libkrun` | 1.19.5 | Latest stable 1.x VM ABI; 2.0 remains explicitly unstable upstream |
+| `libkrunfw` | 5.6.2 | Latest stable firmware bundle; contains Linux 6.12.109 |
 
 Primary release histories: [Tokio](https://github.com/tokio-rs/tokio/releases), [hudsucker](https://github.com/omjadas/hudsucker/releases), [oci-client](https://github.com/oras-project/rust-oci-client/releases), [Serde](https://github.com/serde-rs/serde/releases), and [tar-rs](https://github.com/alexcrichton/tar-rs/releases).
+
+The packaged VM inputs were refreshed on 28 September 2026: libkrun 1.19.5,
+libkrunfw 5.6.2 (corresponding Linux 6.12.109 source), and Alpine 3.21.8.
+Archive hashes, both embedded root filesystems, their package inventory, and the
+Alpine source-builder image digest were updated together. The firmware Linux
+archives now use architecture-specific `lib/<arch>-linux-gnu` directories.
 
 ## Resulting design changes
 
@@ -36,4 +42,4 @@ Primary release histories: [Tokio](https://github.com/tokio-rs/tokio/releases), 
 - Compile-only VM feature checks can use a host libkrun installation. A runnable direct build must also provide a verified target-matching static guest init and provenance through the three `CDM_GUEST_INIT_*` build inputs; macOS additionally requires the Hypervisor entitlement. Release builds instead construct those inputs, re-extract and compile the pinned stable libkrun/libkrunfw sources for every invocation, verify downloaded checksums, build CDM in a fresh target-specific Cargo directory, and use an executable-relative `lib/cdm` runtime path. Package verification follows the transitive libkrun/libkrunfw edges, rejects build-host paths, checks signatures/entitlements or ELF RPATHs, and executes a relocated copy without loader override variables.
 - VM runtime archives are target-specific and self-contained. macOS libraries and CDM are built for deployment target 14.0 and signed inside-out; Linux packages use the equivalent `$ORIGIN` layout.
 - The committed `packaging/libkrun-relative-firmware.patch` changes only libkrun's runtime firmware filename to `@loader_path` on macOS or `$ORIGIN` on Linux. It is applied to checksum-verified upstream source, shipped in the source companion, and recorded in provenance so libkrun cannot silently load a host-installed libkrunfw.
-- Because libkrunfw contains a Linux kernel, the release workflow emits a matching, clearly labelled `cdm-<version>-source-<platform>.tar.gz` asset with libkrun, libkrunfw, and Linux 6.12.91 sources. It additionally refuses production release without a separately prepared Alpine payload containing each exact aports recipe and every `abuild fetch` checksum-verified distfile required by the embedded rootfs inventory. Redistribution without the verified companion is explicitly prohibited by the package notice; users do not need the source asset to install or run CDM.
+- Because libkrunfw contains a Linux kernel, the release workflow emits a matching, clearly labelled `cdm-<version>-source-<platform>.tar.gz` asset with libkrun, libkrunfw, and Linux 6.12.109 sources. It additionally refuses production release without a separately prepared Alpine payload containing each exact aports recipe and every `abuild fetch` checksum-verified distfile required by the embedded rootfs inventory. Redistribution without the verified companion is explicitly prohibited by the package notice; users do not need the source asset to install or run CDM.

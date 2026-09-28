@@ -165,7 +165,7 @@ fn test_extract_bundled_rootfs_repairs_tree_poisoning() {
     );
     assert!(is_complete(
         &repaired,
-        &format!("alpine-minirootfs-3.21.7-{BUNDLED_ARCH}")
+        &format!("alpine-minirootfs-3.21.8-{BUNDLED_ARCH}")
     ));
     let _ = std::fs::remove_dir_all(cache);
 }

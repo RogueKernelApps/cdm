@@ -4,7 +4,7 @@ The VM-enabled CDM package contains:
 
 - `libkrun`, licensed under Apache-2.0.
 - `libkrunfw`, whose generated library code is LGPL-2.1-only and whose bundled Linux kernel and patches are GPL-2.0-only.
-- An Alpine Linux 3.21.7 minirootfs. Its exact per-architecture binary-package
+- An Alpine Linux 3.21.8 minirootfs. Its exact per-architecture binary-package
   inventory, declared license expressions, APK checksums, source-package
   identities, and build commits are recorded in
   `share/licenses/alpine/inventory.json`.
