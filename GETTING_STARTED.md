@@ -255,3 +255,8 @@ Each foreground runner accepts one job and removes its temporary installation
 on exit. Nothing starts when you log in or open the project. See the
 [release runbook](rust/packaging/README.md#temporary-release-runners) for account
 selection, timeouts, cleanup, and release versus local-build requirements.
+
+If the old `/Users/Shared/cdm-github-runners` folder has been deleted, follow
+[Recreate release capability](rust/packaging/README.md#recreate-release-capability-after-deleting-the-old-runner).
+The temporary-runner command creates everything it needs for registration;
+you do not restore the old folder or enable a login service.

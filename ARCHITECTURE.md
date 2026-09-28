@@ -219,3 +219,11 @@ failure, timeout, or catchable termination. GitHub administration credentials
 remain outside the job environment. Forced kill or power loss requires manual
 cleanup of the reported temporary directory and remaining registration. macOS
 composition and Linux ARM64 acceptance keep their target-native VM gates.
+
+The neutral runner home avoids normal-home configuration and reduces personal
+paths in public logs. It is not filesystem isolation: a release job retains the
+invoking account's host permissions. Deleting the former Shared service layout
+requires no restoration of its credentials or directory; the explicit runner
+command obtains a fresh registration and creates a new temporary tree. The
+[recreation runbook](rust/packaging/README.md#recreate-release-capability-after-deleting-the-old-runner)
+records prerequisites and recovery steps.

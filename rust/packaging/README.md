@@ -357,6 +357,64 @@ service layouts are superseded. Before deleting an old installation, stop its
 service, remove its login/service entry and GitHub registration, and check that
 it contains no work you need. Neither location is used by the temporary runner.
 
+### Recreate release capability after deleting the old runner
+
+The old `/Users/Shared/cdm-github-runners` folder is not required to rebuild CDM.
+The supported recovery recreates **release capability**, using a fresh temporary
+directory each time; it deliberately does not recreate that exact Shared folder
+or its always-on service. Keep the project checkout and use a revision containing
+`packaging/package.sh runner`. No files from the retired installation are needed
+for runner registration.
+
+1. For a local VM build, follow [Build](#build) and the host prerequisites there,
+   then run `cd rust && ./packaging/package.sh runtime`. No GitHub registration,
+   runner download, or background listener is involved. Normal local build outputs
+   remain under `rust/target` until you choose to clean them.
+2. For a GitHub release, prepare an Apple-silicon Mac and a Linux ARM64 environment
+   with usable `/dev/kvm`, using the prerequisites in [GitHub release setup](#github-release-setup).
+   Install Python 3.12+ and GitHub CLI on each runner host. Authenticate with
+   `gh auth login --hostname github.com` if needed, and select an account with
+   repository administration access. Host build tools and GitHub CLI are normal
+   prerequisites; the wrapper does not install or remove them.
+3. Confirm that the repository Actions secrets `CDM_CERTIFICATE_P12` and
+   `CDM_CERTIFICATE_PASSWORD` are still configured for macOS release signing.
+   Deleting a local runner directory does not delete repository secrets. Optional
+   notarization credentials belong in the account keychain, not the runner tree.
+4. From `rust` on each required host, run:
+
+   ```bash
+   ./packaging/package.sh runner --repository RogueKernelApps/cdm
+   # Alternatively, select an already authenticated administrator account:
+   ./packaging/package.sh runner --repository RogueKernelApps/cdm --github-user RogueKernel
+   ```
+
+   Choose one command per host. The wrapper downloads and checksum-verifies the
+   pinned bootstrap, obtains a fresh registration token through `gh`, creates a
+   neutral temporary home, and registers the correct OS/architecture labels.
+   Old `.credentials`, `.runner`, and service plist files must not be restored.
+5. Leave those terminals open until `Listening for Jobs` appears. Trigger the
+   pushed revision as described in [Temporary release runners](#temporary-release-runners).
+   Each runner serves one job, then removes its registration and local tree.
+   To make another release later, repeat the same command. Ctrl-C cancels the
+   session; use `--timeout <seconds>` when the default six-hour window is too short.
+
+The former Shared location and service home were chosen to keep personal
+usernames out of public build paths and avoid using the normal home as the
+build's default configuration directory. **A neutral home is not a sandbox.**
+The runner executes trusted repository code with the invoking account's host
+permissions, so neither `/Users/Shared` nor the new temporary directory prevents
+that code from accessing other files available to the account. The new wrapper
+also keeps its GitHub administration credentials out of the job environment.
+
+`cdm-macos-arm64` and `cdm-linux-arm64` identify different runner registrations,
+not necessarily different physical computers. The Linux environment could be a
+separate machine or a VM on a Mac; the Mac directory's name does not establish
+where Linux is running. Before deleting any old installation, verify its service
+host, stop the service, remove the startup entry and corresponding GitHub
+registration, and preserve any unrelated work. Deleting the Mac folder alone
+does not stop a Linux service. Keep machine-specific host records under ignored
+`.scratch/`, never in public docs or agent instructions.
+
 Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the
 `CDM_CERTIFICATE_P12` repository Actions secret and its export password as
