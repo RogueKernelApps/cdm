@@ -291,9 +291,44 @@ therefore cannot produce a publishable Linux AArch64 artifact.
 
 GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
 to boot CDM's libkrun package. Run one temporary Apple-silicon runner for the
-macOS release job and one temporary Linux ARM64 runner for the acceptance job.
+macOS release job. Keep the existing Linux ARM64 acceptance runner in place;
+migration of that host to a temporary runner or VM is deferred.
 Local `package.sh runtime` and `package.sh release` builds do not need a GitHub
 runner. Opening the project, editing files, and using CDM never start one.
+
+### Linux acceptance and possible future Mac-hosted execution
+
+The existing Linux release arrangement remains in use: GitHub-hosted runners
+compile the packages, and the self-hosted ARM64 runner performs real VM
+acceptance against the downloaded candidate. The temporary runner command is
+available for future host provisioning, but does not migrate or retire an
+existing Linux service. Do not stop that service or replace its environment as
+part of Mac runner cleanup.
+
+Matching ARM64 instruction sets is sufficient for native Linux compilation,
+but does not establish that a container can run CDM's VM tests. Docker Desktop
+runs Linux containers inside a Linux VM on macOS. To test CDM's Linux VM backend
+there, that outer VM must support nested virtualization and expose usable
+`/dev/kvm`; any container must also receive the device and the permissions
+required by the acceptance suite. `--privileged` or `--device /dev/kvm` cannot
+create hardware virtualization support missing from the outer VM.
+
+Apple documents nested virtualization support for
+[M3 and later](https://developer.apple.com/documentation/virtualization/vzgenericplatformconfiguration/isnestedvirtualizationsupported).
+[Lima's configuration](https://github.com/lima-vm/lima/blob/master/templates/default.yaml)
+provides a `nestedVirtualization` option for supported configurations. A
+Mac-hosted disposable Linux ARM64 VM is therefore a candidate for future work,
+not a validated CDM replacement. No VM provisioning, automatic guest boot, or
+guest-disk cleanup is implemented by `package.sh runner`; it provisions only a
+runner on its current host.
+
+If this option is pursued later, require an explicit invocation that creates
+the guest, proves KVM access, runs the exact Linux artifact's acceptance suite,
+retains the intended outputs, and removes registration, guest processes, and
+temporary disks on success, failure, or cancellation. Keep the existing Linux
+acceptance path until that replacement is verified. Machine names, current
+Docker configuration, service locations, and investigation evidence belong in
+ignored `.scratch/` notes rather than public documentation.
 
 ### Temporary release runners
 
@@ -318,8 +353,10 @@ gh workflow run release-composition.yml --repo RogueKernelApps/cdm --ref <pushed
 
 A manual workflow run validates and uploads build artifacts; the existing tag
 push path additionally publishes a release after all target acceptance gates.
-Start both target-native runners before triggering either path. The Linux
-runner must stay available through the preceding composition jobs. An offline
+Ensure both target-native runners are available before triggering either path.
+Use the existing Linux ARM64 service while its migration is deferred; do not
+start an additional temporary Linux runner merely for Mac runner cleanup. The
+Linux runner must stay available through the preceding composition jobs. An offline
 runner leaves its target job queued; GitHub cannot start a process on your Mac
 when nothing is listening there.
 
@@ -370,7 +407,8 @@ for runner registration.
    then run `cd rust && ./packaging/package.sh runtime`. No GitHub registration,
    runner download, or background listener is involved. Normal local build outputs
    remain under `rust/target` until you choose to clean them.
-2. For a GitHub release, prepare an Apple-silicon Mac and a Linux ARM64 environment
+2. For a GitHub release, use an Apple-silicon Mac and the existing Linux ARM64
+   acceptance environment. If provisioning a replacement later, prepare Linux ARM64
    with usable `/dev/kvm`, using the prerequisites in [GitHub release setup](#github-release-setup).
    Install Python 3.12+ and GitHub CLI on each runner host. Authenticate with
    `gh auth login --hostname github.com` if needed, and select an account with
@@ -380,7 +418,8 @@ for runner registration.
    `CDM_CERTIFICATE_PASSWORD` are still configured for macOS release signing.
    Deleting a local runner directory does not delete repository secrets. Optional
    notarization credentials belong in the account keychain, not the runner tree.
-4. From `rust` on each required host, run:
+4. From `rust` on the Mac (or a replacement Linux host only when explicitly
+   provisioning one), run:
 
    ```bash
    ./packaging/package.sh runner --repository RogueKernelApps/cdm

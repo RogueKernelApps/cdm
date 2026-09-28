@@ -46,6 +46,13 @@ Linux ARM64 registrations are separate; a Linux runner may be on another machine
 or in a Linux VM on the same physical machine. Verify the actual service host
 before stopping it, and never infer that deleting the Mac directory retires Linux.
 
+The existing Linux ARM64 acceptance runner is intentionally retained. Do not
+retire it or implement a disposable Linux VM unless that work is explicitly
+requested. The [Linux acceptance findings](rust/packaging/README.md#linux-acceptance-and-possible-future-mac-hosted-execution)
+distinguish GitHub-hosted builds from self-hosted VM tests and describe the
+unimplemented nested-virtualization option. Keep host-specific evidence in
+ignored `.scratch/` notes.
+
 ## Documentation contract
 
 Documentation is part of every behavior change. Update the user guide, architecture, specification, tests guide, and scoped instructions when their contract changes. Keep historical documents clearly labelled as superseded.

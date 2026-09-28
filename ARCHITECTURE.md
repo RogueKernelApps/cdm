@@ -227,3 +227,9 @@ requires no restoration of its credentials or directory; the explicit runner
 command obtains a fresh registration and creates a new temporary tree. The
 [recreation runbook](rust/packaging/README.md#recreate-release-capability-after-deleting-the-old-runner)
 records prerequisites and recovery steps.
+
+Linux package compilation remains GitHub-hosted; Linux ARM64 real-VM acceptance
+remains on the existing self-hosted Linux environment. The temporary runner
+wrapper does not provision a Linux guest on macOS. A disposable nested Linux VM
+is future work requiring usable KVM and exact-artifact acceptance before it can
+replace the current host. See the [Linux acceptance findings](rust/packaging/README.md#linux-acceptance-and-possible-future-mac-hosted-execution).

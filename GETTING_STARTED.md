@@ -250,7 +250,8 @@ Contributors and coding agents must also follow [AGENTS.md](./AGENTS.md) and eve
 Local builds do not need a GitHub Actions runner. For a local VM package, run
 `cd rust && ./packaging/package.sh runtime`; build tools remain host prerequisites.
 For GitHub releases, explicitly run `./packaging/package.sh runner` from `rust`
-on the Mac and Linux ARM64 acceptance host, then trigger the release workflow.
+on the Mac, ensure the existing Linux ARM64 acceptance service is available,
+then trigger the release workflow. Linux host migration is deferred.
 Each foreground runner accepts one job and removes its temporary installation
 on exit. Nothing starts when you log in or open the project. See the
 [release runbook](rust/packaging/README.md#temporary-release-runners) for account
