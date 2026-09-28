@@ -35,7 +35,7 @@ VM boot, and the credential-free integration suite before publication.
 ```bash
 cd rust
 ./packaging/prepare-alpine-sources-container.sh
-export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.7"
+export CDM_ALPINE_SOURCE_DIR="$PWD/target/alpine-corresponding-source-3.21.8"
 ./packaging/package.sh release  # runtime and verified corresponding source
 ./packaging/package.sh runtime  # local validation only; do not redistribute alone
 ./packaging/package.sh sources  # incomplete unless CDM_ALPINE_SOURCE_DIR is set
@@ -89,6 +89,11 @@ be published. If a release builder explicitly sets
 keychain profile, requires an `Accepted` response, and records the response beside
 the archive. Command-line tarballs cannot carry a stapled ticket, so this is online
 notarization rather than stapling.
+
+macOS packaging disables Cargo release stripping because stripped build-time
+proc-macro libraries can have a malformed LINKEDIT string pool with current
+Apple linkers. Optimization and LTO remain enabled; package signatures and
+entitlements are still verified.
 
 macOS release builders need Rust, a C toolchain, `pkg-config`, `xz`, LLVM/libclang, `ld.lld`, and the matching `aarch64-unknown-linux-musl` Rust target used for the static guest init. The script uses `llvm-config`/`ld.lld` from `PATH`, with Homebrew discovery only as a release-builder convenience. End users do not need Homebrew.
 
@@ -159,7 +164,7 @@ verified corresponding-source payload and remain byte-exact.
 
 ### Preparing Alpine sources
 
-The host wrapper runs the acquisition tool in the official Alpine 3.21.7 image,
+The host wrapper runs the acquisition tool in the official Alpine 3.21.8 image,
 pinned by multi-architecture OCI digest in `versions.env`:
 
 ```bash
@@ -167,11 +172,11 @@ cd rust
 ./packaging/prepare-alpine-sources-container.sh
 python3 packaging/verify-alpine-sources.py verify \
   assets/alpine-rootfs.lock.json \
-  target/alpine-corresponding-source-3.21.7
+  target/alpine-corresponding-source-3.21.8
 ```
 
 The output path must not already exist. The tool derives and clones the official
-Alpine `3.21-stable` aports branch from the pinned `3.21.7` environment, checks
+Alpine `3.21-stable` aports branch from the pinned `3.21.8` environment, checks
 out each exact per-package commit from the rootfs lock, runs `abuild validate`,
 validates `pkgname` and `pkgver-pkgrel`, copies the complete APKBUILD directory,
 and runs `abuild fetch` (with three bounded attempts for transient network
@@ -182,12 +187,12 @@ The container installs GNU Wget rather than relying on the BusyBox applet becaus
 some pinned upstream source hosts reject BusyBox Wget requests.
 
 To run without Docker, install `abuild`, `git`, `python3`, and GNU `wget` in an
-exact Alpine 3.21.7 environment and invoke the Alpine-native tool directly:
+exact Alpine 3.21.8 environment and invoke the Alpine-native tool directly:
 
 ```sh
 packaging/fetch-alpine-sources.sh \
   assets/alpine-rootfs.lock.json \
-  target/alpine-corresponding-source-3.21.7
+  target/alpine-corresponding-source-3.21.8
 ```
 
 Do not substitute a floating Alpine tag or a different release. Do not describe a
@@ -285,36 +290,72 @@ attestation and release upload. A failed or unavailable acceptance runner
 therefore cannot produce a publishable Linux AArch64 artifact.
 
 GitHub-hosted ARM macOS runners cannot provide the nested virtualization needed
-to boot CDM's libkrun package. Register one Apple-silicon runner with the exact
-labels `self-hosted`, `macOS`, `ARM64`, and `cdm-release`. It needs the macOS build
-tools documented above, Docker for acquiring exact Alpine corresponding source,
-and permission to run a real libkrun microVM. Keep it dedicated and ephemeral
-where practical because release jobs execute repository code.
+to boot CDM's libkrun package. Run one temporary Apple-silicon runner for the
+macOS release job and one temporary Linux ARM64 runner for the acceptance job.
+Local `package.sh runtime` and `package.sh release` builds do not need a GitHub
+runner. Opening the project, editing files, and using CDM never start one.
 
-Install self-hosted runners beneath a neutral, non-personal work path and give
-their service a neutral `HOME`; GitHub publishes action logs for public
-repositories, including paths printed by checkout and build tools. Keep runner
-registration credentials mode 0600 and never place signing material in the
-runner directory. The workflow imports the macOS identity from encrypted Actions
-secrets into a disposable keychain instead. The maintained runner layout uses
-`/Users/Shared/cdm-github-runners/cdm-macos-arm64` on macOS with
-`/Users/Shared/cdm-github-runners/home` as its service `HOME`, and
-`/opt/cdm-github-runners/cdm-linux-arm64` on Linux AArch64 with
-`/opt/cdm-github-runners/home` as its service `HOME`.
+### Temporary release runners
 
-The macOS runner must remain a per-user LaunchAgent in the logged-in GUI session.
-After `svc.sh install`, remove the generated plist's `SessionCreate` key before
-starting the service. `SessionCreate` places the runner in a separate security
-session: certificate import and identity discovery still work there, but
-`codesign` cannot access the private key and fails with
-`errSecInternalComponent`. Recheck the plist whenever the runner service is
-reinstalled or upgraded.
+On each required host, explicitly start a foreground runner from a trusted
+checkout (Python 3.12+ and authenticated `gh` with repository administration
+access are required):
 
-The workflow uses a run-specific Cargo home and always removes its Cargo cache,
-package and guest-init target trees, and temporary release journeys after
-accepted artifacts have been uploaded or after a failed job. The Linux AArch64
-acceptance job likewise removes downloaded candidates and release journeys. This
-cleanup prevents build products from accumulating on persistent runners.
+```bash
+cd rust
+./packaging/package.sh runner --repository RogueKernelApps/cdm
+# With multiple gh accounts, select the repository administrator explicitly:
+./packaging/package.sh runner --repository RogueKernelApps/cdm --github-user RogueKernel
+```
+
+These are alternative invocations, not two runners to start on the same host.
+Wait for the runner's `Listening for Jobs` message, then start the production
+workflow from another terminal or GitHub Actions:
+
+```bash
+gh workflow run release-composition.yml --repo RogueKernelApps/cdm --ref <pushed-branch-or-tag>
+```
+
+A manual workflow run validates and uploads build artifacts; the existing tag
+push path additionally publishes a release after all target acceptance gates.
+Start both target-native runners before triggering either path. The Linux
+runner must stay available through the preceding composition jobs. An offline
+runner leaves its target job queued; GitHub cannot start a process on your Mac
+when nothing is listening there.
+
+`package.sh runner` downloads a checksum-pinned GitHub runner bootstrap into a
+private temporary directory, registers an ephemeral runner with `self-hosted`,
+`macOS` or `Linux`, `ARM64`, and `cdm-release` labels, and accepts one job. GitHub's
+runner may update itself inside that disposable directory. The command never
+installs a LaunchAgent, daemon, or login item. Its neutral temporary `HOME`,
+Rust toolchains, workspace, logs, and runner installation are removed on exit.
+The default six-hour limit covers waiting plus job execution; use `--timeout
+<seconds>` to change it. Ctrl-C or termination stops the runner process group,
+removes any remaining GitHub registration, and deletes local files. Cleanup
+failures are errors and identify the remaining registration or directory. A
+power loss or SIGKILL cannot run cleanup: remove the reported
+`cdm-release-runner-*` temporary directory and any matching `cdm-on-demand-*`
+registration manually before retrying. The command's exit status describes the
+runner session; consult GitHub for the job's build/acceptance result.
+
+The wrapper keeps GitHub administration credentials in its host process and
+passes only a short-lived registration token to configuration through the
+environment. It does not pass those credentials to the job environment. Only
+run it against a trusted repository: release jobs execute repository code on
+the host. macOS needs the build tools documented above, Docker for Alpine
+corresponding source, and permission to run a real libkrun microVM. Linux ARM64
+needs the KVM prerequisites listed above. These normal host build prerequisites
+are not installed or removed by the runner command.
+
+The runner stays in the invoking GUI login session on macOS so Developer ID
+signing can access its temporary keychain. No separate `SessionCreate` security
+session is created. The workflow removes its build products and signing
+keychain, and the wrapper additionally removes the temporary runner tree.
+
+The former `/Users/Shared/cdm-github-runners` and `/opt/cdm-github-runners`
+service layouts are superseded. Before deleting an old installation, stop its
+service, remove its login/service entry and GitHub registration, and check that
+it contains no work you need. Neither location is used by the temporary runner.
 
 Export only the Developer ID Application certificate and private key as a
 password-protected PKCS #12 file. Add its single-line Base64 representation as the
@@ -328,7 +369,7 @@ It suppresses certificate labels in public action logs and does not depend on th
 runner user's login keychain or a separate identity-name secret. Both the probe
 and package signer pass that disposable keychain explicitly through
 `CDM_CODESIGN_KEYCHAIN`, so signing does not depend on per-user keychain search
-preferences. The self-hosted runner keeps a neutral service `HOME` for public log
+preferences. The temporary runner keeps a neutral `HOME` for public log
 paths, but `codesign` receives the macOS account home through
 `CDM_CODESIGN_HOME` and the disposable keychain is unlocked in that same account
 context; Apple's signing service otherwise cannot resolve or use an identity

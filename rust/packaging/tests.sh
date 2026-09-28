@@ -30,7 +30,9 @@ for checksum in \
     "$LIBKRUNFW_SOURCE_SHA256" \
     "$LINUX_SOURCE_SHA256" \
     "$ALPINE_AARCH64_SHA256" \
-    "$ALPINE_X86_64_SHA256"; do
+    "$ALPINE_X86_64_SHA256" \
+    "$GITHUB_RUNNER_OSX_ARM64_SHA256" \
+    "$GITHUB_RUNNER_LINUX_ARM64_SHA256"; do
     [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] || fail "invalid SHA-256: $checksum"
 done
 
@@ -41,6 +43,7 @@ done
 python3 -m json.tool "$packaging_dir/../assets/alpine-rootfs.lock.json" >/dev/null \
     || fail "invalid Alpine rootfs manifest"
 
+python3 "$packaging_dir/test_release_runner.py"
 bash -n "$packaging_dir/package.sh"
 bash -n "$packaging_dir/../../install.sh"
 bash -n "$packaging_dir/guest-init.sh"

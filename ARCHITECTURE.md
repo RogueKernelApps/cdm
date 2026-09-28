@@ -63,7 +63,7 @@ The project is intentionally one binary with deep modules around isolation backe
 
 ## External SDKs and protocols
 
-- **libkrun C API (VM feature):** context lifecycle, VM resources, root, VirtioFS, exec, vsock/TSI policy, and guest entry. Release packages pin libkrun 1.19.4 and libkrunfw 5.5.0. CDM links libkrun through an executable-relative `lib/cdm` rpath; libkrun loads the adjacent firmware library. No package contains a build-host or Homebrew runtime path.
+- **libkrun C API (VM feature):** context lifecycle, VM resources, root, VirtioFS, exec, vsock/TSI policy, and guest entry. Release packages pin libkrun 1.19.5 and libkrunfw 5.6.2. CDM links libkrun through an executable-relative `lib/cdm` rpath; libkrun loads the adjacent firmware library. No package contains a build-host or Homebrew runtime path.
 - **OCI Distribution API (VM feature):** `oci-client` authenticates, pulls manifests and layers, and feeds the rootfs cache. Layer whiteouts are applied before safe extraction.
 - **HTTP proxy stack:** hudsucker, Hyper body utilities, Tokio, and rustls implement HTTP forwarding and generated MITM certificates. HTTP/2 remains disabled because CONNECT handling uses the HTTP/1 path.
 - **Host adapters:** Seatbelt and Bubblewrap are command-line boundaries, not linked SDKs.
@@ -207,3 +207,15 @@ Current constraints:
 - Native adapters run under the shared host process supervisor in a dedicated process group without user code after fork. On Linux, Bubblewrap's PID namespace and `--die-with-parent` make the namespace lifecycle the containment boundary, so `setsid` and double-fork cannot survive Bubblewrap. macOS has no supported PID namespace, subreaper, or recursive process-tracking API: Apple's `NOTE_TRACK` kqueue flags have explicitly been unsupported since macOS 10.5. CDM therefore guarantees cleanup only for the original macOS process group; a child that deliberately creates a new session can outlive native supervision while retaining its inherited Seatbelt restrictions. Use VM mode where malicious daemon containment is required. The VM launcher uses the same process-group principles with explicit `posix_spawn`, avoiding fork-after-Tokio. Supervisors poll without an interrupt race, forward signals received by CDM to the whole group, restore terminal ownership, and preserve normal or signaled exit status. Interactive terminal ownership currently goes to the foreground child group so reads work; consequently, a terminal-generated signal deliberately ignored by the entire group is not observable by the parent for escalation. Closing that edge requires an intermediate foreground supervisor or PTY relay.
 - Denylists match request authorities, not every DNS alias or equivalent literal IP. Allowlists are the strict destination mechanism. Non-HTTP protocols do not receive secret restoration.
 - VM mode is inherently host-isolated; `--iso` still controls host-side credential discovery and reports the same resolved policy as native adapters.
+
+## Release runner lifetime
+
+Local packaging runs directly through `rust/packaging/package.sh` without a
+GitHub runner. Its explicit `runner` command provisions one ephemeral,
+foreground GitHub runner in a private temporary directory for a release job.
+It installs no login service. Registration, runner processes, workspace, and
+neutral toolchain home belong to that command and are cleaned up on completion,
+failure, timeout, or catchable termination. GitHub administration credentials
+remain outside the job environment. Forced kill or power loss requires manual
+cleanup of the reported temporary directory and remaining registration. macOS
+composition and Linux ARM64 acceptance keep their target-native VM gates.

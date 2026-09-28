@@ -8,7 +8,7 @@ CDM keeps fast unit tests in the Rust module hierarchy and reserves this directo
 2. `cargo test --all-targets --features vm` adds VM/rootfs unit tests, including hostile symlink/hard-link caches, native-to-VM cache poisoning, streamed-layer cleanup, and compressed/expanded/entry/depth quota bombs.
 3. `python3 -m unittest tests/test_validate_documentation.py` locks down release-version comparisons, including tagged downgrade attempts; `python3 tests/validate_documentation.py` checks required docs/instructions (including `FUTURE.md`), version and CLI/spec alignment, requires post-release development to advance beyond the highest release tag, the reviewed CLI-help snapshot, CI MSRV/VM/audit gates, relative links, historical labels, VM-testing guidance, and shell syntax.
 4. `tests/integration.sh` runs numbered end-to-end suites against the exact binary provided through `CDM`.
-5. `packaging/tests.sh` checks pinned release metadata, checksums, shell syntax, and relocatable lookup conventions; `packaging/package.sh verify-runtime` checks a local runtime package, while `package.sh verify` additionally enforces redistributable legal completeness.
+5. `packaging/tests.sh` runs the temporary-runner lifecycle tests (external GitHub API and runner distribution doubles; real child processes, signals, and filesystem cleanup), then checks pinned release metadata, checksums, shell syntax, and relocatable lookup conventions; `packaging/package.sh verify-runtime` checks a local runtime package, while `package.sh verify` additionally enforces redistributable legal completeness.
 
 ## Integration suites
 

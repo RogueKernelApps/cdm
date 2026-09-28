@@ -2,7 +2,7 @@
 
 Read the repository-root and `rust/AGENTS.md` instructions first. `README.md` in this directory is the release runbook.
 
-- `package.sh` is the sole public VM-release interface.
+- `package.sh` is the sole public VM-release interface. Its `runner` command owns a foreground, one-job temporary GitHub runner; never install a persistent runner service. Keep administration credentials out of the job environment, bound session lifetime, and report incomplete cleanup. Local packaging must remain independent of GitHub runners.
 - Keep upstream versions and SHA-256 values pinned in `versions.env`; never replace verified inputs with floating downloads.
 - Runtime lookup must remain package-relative. Release artifacts must not require Homebrew paths, build-host rpaths, or `DYLD_LIBRARY_PATH`/`LD_LIBRARY_PATH`.
 - Sign macOS libraries before the CDM executable and retain the Hypervisor entitlement. Ad-hoc signing is only for local validation.

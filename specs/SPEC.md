@@ -760,9 +760,9 @@ The macOS AArch64 native and bundled-VM paths are acceptance-tested locally. Lin
 
 ## 13. Dependencies
 
-**Runtime:** The default build has no libkrun dependency. A compile-only VM feature build requires libkrun 1.19+ on the build host. A runnable direct VM build must also receive a verified target-matching static guest init, digest, and provenance through the three `CDM_GUEST_INIT_*` build inputs; macOS additionally requires the Hypervisor entitlement. Release packages construct and verify those inputs, pin libkrun 1.19.4 and libkrunfw 5.5.0 beside CDM under `lib/cdm`, use only executable- or loader-relative runtime lookup, and require no end-user package manager or library-path environment variable. The checksum-verified libkrun source receives the committed filename-only firmware lookup patch, using `@loader_path` on macOS and `$ORIGIN` on Linux, so a host installation cannot satisfy the firmware load. macOS packages target 14.0 and carry the entitlement.
+**Runtime:** The default build has no libkrun dependency. A compile-only VM feature build requires libkrun 1.19+ on the build host. A runnable direct VM build must also receive a verified target-matching static guest init, digest, and provenance through the three `CDM_GUEST_INIT_*` build inputs; macOS additionally requires the Hypervisor entitlement. Release packages construct and verify those inputs, pin libkrun 1.19.5 and libkrunfw 5.6.2 beside CDM under `lib/cdm`, use only executable- or loader-relative runtime lookup, and require no end-user package manager or library-path environment variable. The checksum-verified libkrun source receives the committed filename-only firmware lookup patch, using `@loader_path` on macOS and `$ORIGIN` on Linux, so a host installation cannot satisfy the firmware load. macOS packages target 14.0 and carry the entitlement.
 
-**Distribution:** `rust/packaging/package.sh release` emits a target-specific runtime archive and a corresponding-source archive containing the exact libkrun, libkrunfw, Linux 6.12.91 sources, and the applied package-relative firmware patch. The source archive must be published beside every runtime archive containing libkrunfw.
+**Distribution:** `rust/packaging/package.sh release` emits a target-specific runtime archive and a corresponding-source archive containing the exact libkrun, libkrunfw, Linux 6.12.109 sources, and the applied package-relative firmware patch. The source archive must be published beside every runtime archive containing libkrunfw.
 
 **Build:** See `rust/Cargo.toml`, `rust/Cargo.lock`, and `DEPENDENCIES.md`. OCI, tar, and gzip dependencies are optional under the `vm` feature.
 
@@ -773,3 +773,15 @@ The macOS AArch64 native and bundled-VM paths are acceptance-tested locally. Lin
 [`ARCHITECTURE.md`](../ARCHITECTURE.md#modules-and-interfaces) is the canonical
 module-ownership map. This specification defines observable behavior rather
 than duplicating implementation boundaries.
+
+## Release infrastructure lifetime
+
+`rust/packaging/package.sh runner` explicitly provisions a foreground,
+one-job GitHub runner for macOS ARM64 composition or Linux ARM64 acceptance.
+It must not install a persistent login service. The command owns its temporary
+runner, neutral home, toolchains, and registration, and cleans them up after
+completion, failure, timeout, or catchable termination. Cleanup failures must
+return nonzero and identify remaining resources; forced termination may require
+manual cleanup. Local builds and CDM invocations must never require or start this
+runner. All existing exact-package, installed-prefix, and real VM acceptance
+gates remain required for publication.

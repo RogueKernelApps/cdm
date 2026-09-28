@@ -28,11 +28,11 @@ use super::SandboxConfig;
 /// Target-matched Alpine minirootfs, embedded at compile time.
 #[cfg(target_arch = "aarch64")]
 const BUNDLED_ROOTFS: &[u8] =
-    include_bytes!("../../assets/alpine-minirootfs-3.21.7-aarch64.tar.gz");
+    include_bytes!("../../assets/alpine-minirootfs-3.21.8-aarch64.tar.gz");
 #[cfg(target_arch = "aarch64")]
 const BUNDLED_SHA256: &str = "d1d1a3fae5f4d6146e9742790a47fcb116199622cfb8439f218a4d5fbe5000da";
 #[cfg(target_arch = "x86_64")]
-const BUNDLED_ROOTFS: &[u8] = include_bytes!("../../assets/alpine-minirootfs-3.21.7-x86_64.tar.gz");
+const BUNDLED_ROOTFS: &[u8] = include_bytes!("../../assets/alpine-minirootfs-3.21.8-x86_64.tar.gz");
 #[cfg(target_arch = "x86_64")]
 const BUNDLED_SHA256: &str = "8cba1ea3e8b500ea986a313d8eecf3d5952a2a0d23a69117bb81c023d9ceac05";
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
@@ -481,7 +481,7 @@ fn extract_bundled_rootfs_in(cache: &Path) -> io::Result<PathBuf> {
     let dir = cache.join(format!("bundled-{BUNDLED_ARCH}"));
     ensure_private_directory(cache)?;
     let _lock = lock_cache(&dir)?;
-    let source = format!("alpine-minirootfs-3.21.7-{BUNDLED_ARCH}");
+    let source = format!("alpine-minirootfs-3.21.8-{BUNDLED_ARCH}");
 
     if is_complete(&dir, &source) {
         return Ok(dir);
