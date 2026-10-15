@@ -30,6 +30,15 @@ Archive hashes, both embedded root filesystems, their package inventory, and the
 Alpine source-builder image digest were updated together. The firmware Linux
 archives now use architecture-specific `lib/<arch>-linux-gnu` directories.
 
+The merge audit was refreshed on 15 October 2026. The lockfile selects
+`rustls` 0.23.46 to address
+[RUSTSEC-2026-0285](https://rustsec.org/advisories/RUSTSEC-2026-0285), along with
+its compatible `rustls-webpki` 0.103.15 and AWS-LC dependencies. `chacha20` moves
+from the yanked 0.10.1 release to 0.10.2. The refresh also includes the rustls
+advisories published on 14 October 2026 (RUSTSEC-2026-0346 through -0349) and
+`quinn-proto` 0.11.18 for RUSTSEC-2026-0338 through -0342. The strict CI audit
+remains enabled.
+
 ## Resulting design changes
 
 - VM dependencies are optional. `cargo build --release` produces a native-only artifact; `--features vm` adds libkrun and OCI support.
