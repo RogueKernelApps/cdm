@@ -540,3 +540,8 @@ x86_64, and Linux AArch64 runners. See the
 and source-distribution requirements.
 
 CDM is licensed under the [MIT License](LICENSE).
+
+Local builds require no background runner. GitHub releases use an explicitly
+started, temporary runner through `rust/packaging/package.sh runner`; it accepts
+one job and removes itself afterwards. See the
+[temporary release runner instructions](rust/packaging/README.md#temporary-release-runners).

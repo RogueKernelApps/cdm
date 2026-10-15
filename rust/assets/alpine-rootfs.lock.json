@@ -1,11 +1,11 @@
 {
   "schema": 2,
-  "alpine_version": "3.21.7",
+  "alpine_version": "3.21.8",
   "rootfs": [
     {
       "architecture": "aarch64",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.7-aarch64.tar.gz",
-      "sha256": "d1d1a3fae5f4d6146e9742790a47fcb116199622cfb8439f218a4d5fbe5000da",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.8-aarch64.tar.gz",
+      "sha256": "f25a96d2846a4bc439093107c1b48a8b0c93dcb411e2cb9cfded6f790b2bc001",
       "packages": [
         {
           "apk_checksum": "Q1fMzOBGrN5A2tRfD+hq90EexboUQ=",
@@ -41,15 +41,15 @@
           "build_commit": "6d473fb38effb2389f567b29fb7eb27039b3a279"
         },
         {
-          "apk_checksum": "Q1H/YWkqCB+C+Gc/LP9yCF2jagE5M=",
+          "apk_checksum": "Q1Fkfd062ERyHA4921Hopny89fGiY=",
           "name": "alpine-release",
-          "version": "3.21.7-r0",
+          "version": "3.21.8-r0",
           "architecture": "aarch64",
           "description": "Alpine release data",
           "source_url": "https://alpinelinux.org",
           "license": "MIT",
           "source_package": "alpine-base",
-          "build_commit": "d0fb4afb42fe848ef523e006f2672ef2caf75ee1"
+          "build_commit": "c9e7411a5b43b71e267421008585d98f939b5bd9"
         },
         {
           "apk_checksum": "Q1CkP9a3awut9Uv8Wj9F0CqEKo7YM=",
@@ -85,37 +85,37 @@
           "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
         },
         {
-          "apk_checksum": "Q19ceKTfkaGbTN3WMUv+IWr1G5zwU=",
+          "apk_checksum": "Q1OEoIguchyA92nrIQrp6ozXmocSQ=",
           "name": "ca-certificates-bundle",
-          "version": "20260413-r0",
+          "version": "20260909-r0",
           "architecture": "aarch64",
           "description": "Pre generated bundle of Mozilla certificates",
           "source_url": "https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/",
           "license": "MPL-2.0 AND MIT",
           "source_package": "ca-certificates",
-          "build_commit": "f4e20cbe4e1a935579988dfd8cae241d8d050a63"
+          "build_commit": "3f566dda324c7524d639b8f4270be4ad6bd4e50b"
         },
         {
-          "apk_checksum": "Q1dRIsQ3250kFeYeGAY15npEsHfsg=",
+          "apk_checksum": "Q1nM3X+tqA2vWfWLF/2tPEme4an0U=",
           "name": "libcrypto3",
-          "version": "3.3.7-r0",
+          "version": "3.3.7-r1",
           "architecture": "aarch64",
           "description": "Crypto library from openssl",
           "source_url": "https://www.openssl.org/",
           "license": "Apache-2.0",
           "source_package": "openssl",
-          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+          "build_commit": "9b59567ddd9ca9722deeedb5145506726b5c9389"
         },
         {
-          "apk_checksum": "Q1fL+jshvATvz6mrmfR+BpVsuUraU=",
+          "apk_checksum": "Q12noVNaITshQnazeDSdE6IVIzTgQ=",
           "name": "libssl3",
-          "version": "3.3.7-r0",
+          "version": "3.3.7-r1",
           "architecture": "aarch64",
           "description": "SSL shared libraries",
           "source_url": "https://www.openssl.org/",
           "license": "Apache-2.0",
           "source_package": "openssl",
-          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+          "build_commit": "9b59567ddd9ca9722deeedb5145506726b5c9389"
         },
         {
           "apk_checksum": "Q1VGBj6ffzFAQCf6cdcQm8gh+VWxI=",
@@ -176,8 +176,8 @@
     },
     {
       "architecture": "x86_64",
-      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.7-x86_64.tar.gz",
-      "sha256": "8cba1ea3e8b500ea986a313d8eecf3d5952a2a0d23a69117bb81c023d9ceac05",
+      "url": "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.8-x86_64.tar.gz",
+      "sha256": "6ea461b0225faad280b7e13df878b30fdd6d969dde25ef05f85a1bcec9033348",
       "packages": [
         {
           "apk_checksum": "Q17OteNVXn9/iSXcJI1Vf8x0TVc9Y=",
@@ -213,15 +213,15 @@
           "build_commit": "6d473fb38effb2389f567b29fb7eb27039b3a279"
         },
         {
-          "apk_checksum": "Q1+UZuHHcZSFAbgjaT3TSHn7lLRgQ=",
+          "apk_checksum": "Q1ufchVk3yFzcUAxuvYsJcA0Tu2zY=",
           "name": "alpine-release",
-          "version": "3.21.7-r0",
+          "version": "3.21.8-r0",
           "architecture": "x86_64",
           "description": "Alpine release data",
           "source_url": "https://alpinelinux.org",
           "license": "MIT",
           "source_package": "alpine-base",
-          "build_commit": "d0fb4afb42fe848ef523e006f2672ef2caf75ee1"
+          "build_commit": "c9e7411a5b43b71e267421008585d98f939b5bd9"
         },
         {
           "apk_checksum": "Q1lwQ1jRtE+nceCgo6Un2KJoMOPro=",
@@ -257,37 +257,37 @@
           "build_commit": "284d827a2793963e6dcf88324bd1eb81adff579c"
         },
         {
-          "apk_checksum": "Q1T1Uo0Udg4sBlMwFrMAy/c260k0U=",
+          "apk_checksum": "Q1TbY5FaaskECo4G1TBsV4Vfsfe64=",
           "name": "ca-certificates-bundle",
-          "version": "20260413-r0",
+          "version": "20260909-r0",
           "architecture": "x86_64",
           "description": "Pre generated bundle of Mozilla certificates",
           "source_url": "https://www.mozilla.org/en-US/about/governance/policies/security-group/certs/",
           "license": "MPL-2.0 AND MIT",
           "source_package": "ca-certificates",
-          "build_commit": "f4e20cbe4e1a935579988dfd8cae241d8d050a63"
+          "build_commit": "3f566dda324c7524d639b8f4270be4ad6bd4e50b"
         },
         {
-          "apk_checksum": "Q1RD/XEPHSc/uIBLOlSwh0ct3N7Uo=",
+          "apk_checksum": "Q1h/V0V6uqatBYR8iL57DcZ8NqqtQ=",
           "name": "libcrypto3",
-          "version": "3.3.7-r0",
+          "version": "3.3.7-r1",
           "architecture": "x86_64",
           "description": "Crypto library from openssl",
           "source_url": "https://www.openssl.org/",
           "license": "Apache-2.0",
           "source_package": "openssl",
-          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+          "build_commit": "9b59567ddd9ca9722deeedb5145506726b5c9389"
         },
         {
-          "apk_checksum": "Q1L+uSQWoZBOp/i3PIo88OqsEJ+TQ=",
+          "apk_checksum": "Q1wvMc9Hc96e8JAkeZOdjSQ4XmK/8=",
           "name": "libssl3",
-          "version": "3.3.7-r0",
+          "version": "3.3.7-r1",
           "architecture": "x86_64",
           "description": "SSL shared libraries",
           "source_url": "https://www.openssl.org/",
           "license": "Apache-2.0",
           "source_package": "openssl",
-          "build_commit": "8ec72d9972fac0f527a00fd5ee927f88f0895cac"
+          "build_commit": "9b59567ddd9ca9722deeedb5145506726b5c9389"
         },
         {
           "apk_checksum": "Q1KuzxE7sFBvldrt+RbsBErcpFyrM=",

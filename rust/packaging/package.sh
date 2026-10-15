@@ -275,7 +275,7 @@ build_linux_runtime() {
     make -C "$krun_source" PREFIX="$prefix" all
 
     mkdir -p "$prefix/lib64"
-    install -m 755 "$fw_source/lib64/libkrunfw.so.$LIBKRUNFW_VERSION" \
+    install -m 755 "$fw_source/lib/$arch-linux-gnu/libkrunfw.so.$LIBKRUNFW_VERSION" \
         "$prefix/lib64/libkrunfw.so.$LIBKRUNFW_ABI"
     ln -sf "libkrunfw.so.$LIBKRUNFW_ABI" "$prefix/lib64/libkrunfw.so"
     make -C "$krun_source" PREFIX="$prefix" install
@@ -578,6 +578,11 @@ package_runtime() {
 
     command -p rm -rf "$prefix" "$package" "$archive"
     mkdir -p "$prefix" "$package/bin" "$package/lib/cdm"
+    if [[ "$target" == *apple-darwin ]]; then
+        # Stripping Rust proc-macro dylibs can produce a misaligned LINKEDIT
+        # string pool with current Apple linkers. Keep these fresh builds loadable.
+        export CARGO_PROFILE_RELEASE_STRIP=none
+    fi
     prepare_guest_init "$target" "$work_dir/guest-init-$target"
 
     if [[ "$target" == *apple-darwin ]]; then
@@ -704,6 +709,10 @@ EOF
 }
 
 case "$command" in
+    runner)
+        shift
+        exec python3 "$packaging_dir/release-runner.py" "$@"
+        ;;
     release)
         release_preflight
         mkdir -p "$dist_dir"
@@ -729,6 +738,6 @@ case "$command" in
         verify_package "$2" "$3" 0
         ;;
     *)
-        fail "usage: $0 [release|runtime|sources|verify|verify-runtime <package-directory> <target-triple>]"
+        fail "usage: $0 [runner [--repository OWNER/REPO] [--github-user USER] [--timeout SECONDS]|release|runtime|sources|verify|verify-runtime <package-directory> <target-triple>]"
         ;;
 esac
